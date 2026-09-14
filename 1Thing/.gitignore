@@ -1,0 +1,25 @@
+# Gradle
+.gradle
+build/
+*.apk
+*.ap_
+*.aab
+
+# Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+local.properties
+
+# Kotlin
+.kotlin
+out/
+
+# Misc
+*.swp
+*.swo
+*~
+.env
+.vscode/
