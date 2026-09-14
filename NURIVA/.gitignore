@@ -1,0 +1,12 @@
+
+# Build artifacts / test APKs (never commit binaries)
+*.apk
+*.aab
+build/
+.dart_tool/
+
+# Mutation testing scratch (parked, see docs/parked/)
+.mutation-backup/
+mutation-run.log
+mutation-report/
+mutation-test-report/

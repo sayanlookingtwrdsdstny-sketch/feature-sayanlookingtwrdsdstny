@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NURIVA mutation testing configuration.
+
+  Mutation testing answers the question coverage cannot: "if this logic were
+  wrong, would a test notice?" It edits the source (flipping == to !=, && to ||,
+  true to false) and re-runs the suite. A mutation the suite still passes is a
+  "survivor" - a line the tests execute but do not actually check.
+
+  For a medication app this matters more than usual: a surviving mutant in a
+  grace-period comparison or a permission check is a bug class that ships
+  silently at 100% line coverage.
+
+  === Why the rule set is narrower than the obvious one ===
+
+  Dart uses angle brackets for generics, so mutating "<" or ">" rewrites
+  `Failure<R>(x)` into `Failure<=R>(x)`, which does not compile. A compile
+  failure makes the test command exit non-zero, which this tool counts as
+  "mutation detected" - so those rules would manufacture hundreds of free kills
+  and inflate the score while testing nothing. They are deliberately excluded.
+
+  For the same reason "!" removal is excluded: it turns "!=" into "=", another
+  guaranteed compile error. Only mutations that produce *valid but wrong* code
+  are kept, because only those measure the test suite.
+-->
+<mutations version="1.0">
+
+  <files>
+    <!-- Error and result plumbing: every fallible call path depends on these -->
+    <file>lib/core/result/result.dart</file>
+    <file>lib/core/errors/app_failure.dart</file>
+
+    <!-- Clock: the foundation of all dose-timing correctness -->
+    <file>lib/core/time/clock.dart</file>
+
+    <!-- Config: flavor parsing and the production developer-tools guard -->
+    <file>lib/core/config/app_config.dart</file>
+
+    <!-- Deterministic IDs: idempotent dose generation depends on these exactly -->
+    <file>lib/core/constants/firestore_paths.dart</file>
+
+    <!-- PHI redaction: a survivor here is a privacy leak -->
+    <file>lib/core/logging/app_logger.dart</file>
+
+    <!-- Route rules: what keeps a signed-out user off patient data -->
+    <file>lib/core/routing/app_routes.dart</file>
+    <file>lib/core/routing/route_guard.dart</file>
+  </files>
+
+  <exclude>
+    <token begin="//" end="\n"/>
+    <token begin="/*" end="*/"/>
+    <token begin="///" end="\n"/>
+  </exclude>
+
+  <commands>
+    <!--
+      expected-return 0 means "the suite still passed", i.e. the mutation was
+      NOT detected. Those are the survivors this run is hunting for.
+    -->
+    <command group="test" expected-return="0" timeout="300">flutter test --reporter failures-only</command>
+  </commands>
+
+  <rules>
+    <!-- Equality inversion. Catches a test that asserts a value is "something"
+         without asserting which - the single most common weak assertion. -->
+    <literal text="==">
+      <mutation text="!="/>
+    </literal>
+    <literal text="!=">
+      <mutation text="=="/>
+    </literal>
+
+    <!-- Boundary errors. Off-by-one in a grace period or horizon is the most
+         likely real defect in this codebase. Safe to mutate: "&lt;=" and "&gt;="
+         never appear inside a generic type argument. -->
+    <literal text="&lt;=">
+      <mutation text="&lt;"/>
+    </literal>
+    <literal text="&gt;=">
+      <mutation text="&gt;"/>
+    </literal>
+
+    <!-- Boolean logic. Permission checks and route guards live here. -->
+    <literal text="&amp;&amp;">
+      <mutation text="||"/>
+    </literal>
+    <literal text="||">
+      <mutation text="&amp;&amp;"/>
+    </literal>
+
+    <!-- Constant flips: isProduction, allowDeveloperTools, guard returns. -->
+    <literal text="true">
+      <mutation text="false"/>
+    </literal>
+    <literal text="false">
+      <mutation text="true"/>
+    </literal>
+
+    <!-- Null-coalescing removal: `onError?.call(...) ?? default` must be
+         exercised on both sides, not just the default. -->
+    <literal text="??">
+      <mutation text="|| "/>
+    </literal>
+  </rules>
+
+  <!--
+    80% is a floor, not an aspiration. Some mutants are *equivalent* - the
+    mutated code behaves identically to the original - and no test can kill
+    them, so 100% is not a meaningful target.
+  -->
+  <threshold failure="80">
+    <rating over="95" name="A"/>
+    <rating over="90" name="B"/>
+    <rating over="80" name="C"/>
+    <rating over="70" name="D"/>
+    <rating over="0"  name="F"/>
+  </threshold>
+
+</mutations>
