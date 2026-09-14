@@ -107,7 +107,7 @@ None. No Firebase project exists. `core/constants/firestore_paths.dart` defines 
 
 ### Testing completed
 
-**134 tests passing**, `flutter analyze` clean.
+**141 tests passing**, `flutter analyze` clean.
 
 Basic functional testing per §5 — no advanced testing performed.
 
@@ -122,6 +122,25 @@ Basic functional testing per §5 — no advanced testing performed.
 | Route guards | signed-in/out redirects, public routes, revocation |
 | Design system | button variants, busy state, status chips, state views |
 | Theme | light/dark status colours, touch targets, 4dp rhythm |
+| **App smoke (`test/app_smoke_test.dart`)** | launches, splash → home handoff, scrolling, dev gallery reachable, **prod gallery unreachable**, dark theme, 3× system font |
+
+#### Two real defects the smoke test caught
+
+`flutter analyze`, 134 unit tests and a **successful APK build** all passed while
+the app did not render. Component-level tests did not catch either of these,
+because both only appear when the widgets are composed into real screens.
+**Keep the smoke test green — it is the only check that the app actually boots.**
+
+1. **`NurivaCard` demanded infinite height.** The accent rail used a `Row` with
+   `CrossAxisAlignment.stretch`, which asks for the parent's full height. Inside
+   a sliver that is unbounded, so layout threw *"BoxConstraints forces an
+   infinite height"* and every screen using an accent card failed to render.
+   **Fixed** by positioning the rail in a `Stack` — the card sizes to its
+   content and the rail fills it, with none of `IntrinsicHeight`'s cost.
+
+2. **The splash leaked an uncancelled timer.** `Future.delayed` in `initState`
+   kept running after disposal and then called `context.go` on a dead element.
+   **Fixed** with a `Timer` field cancelled in `dispose()`.
 
 ### Known issues / limitations
 
@@ -144,8 +163,13 @@ Basic functional testing per §5 — no advanced testing performed.
 |---|---|
 | Command | `flutter build apk --debug` |
 | Artifact | `NURIVA_Module_01_v0.1.0_debug.apk` |
-| Location | `NURIVA/builds/` |
+| Location | `NURIVA/builds/` (gitignored — binaries are never committed) |
+| Size | **180 MB** — debug builds bundle every ABI plus debug symbols |
+| Verified identity | `package: com.nuriva.app`, `versionName 0.1.0`, `versionCode 1`, `application-label: NURIVA`, `targetSdk 36` |
 | Signing | Debug keystore — sideload only, **not** Play-ready |
+
+180 MB is awkward to transfer. For sideloading, `flutter build apk --release`
+produces ~45 MB (still debug-signed), and `--split-per-abi` cuts it further.
 
 ### Environment (verified working)
 

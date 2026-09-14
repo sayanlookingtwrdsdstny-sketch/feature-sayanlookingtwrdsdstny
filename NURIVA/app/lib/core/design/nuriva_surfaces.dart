@@ -44,21 +44,27 @@ final class NurivaCard extends StatelessWidget {
             ? NurivaTokens.shadowSoft(context.theme.brightness)
             : null,
       ),
+      // The rail is positioned rather than laid out as a stretched Row child.
+      // `CrossAxisAlignment.stretch` asks for the parent's full height, which
+      // is infinite inside a sliver or a scrolling column — and that throws
+      // "BoxConstraints forces an infinite height" at layout time. A Stack
+      // sizes itself to the content and lets the rail fill whatever that is,
+      // with none of the cost of IntrinsicHeight.
       child: accent == null
           ? content
-          : Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+          : Stack(
               children: [
-                Container(
-                  width: 4,
-                  decoration: BoxDecoration(
-                    color: accent,
-                    borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(NurivaTokens.radiusLg),
-                    ),
-                  ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: content,
                 ),
-                Expanded(child: content),
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 4,
+                  child: ColoredBox(color: accent!),
+                ),
               ],
             ),
     );

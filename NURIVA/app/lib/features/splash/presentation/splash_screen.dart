@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,26 +26,37 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     duration: NurivaTokens.durationSlow,
   )..forward();
 
+  /// Held so it can be cancelled in [dispose].
+  ///
+  /// An uncancelled `Future.delayed` keeps running after the widget is gone and
+  /// then calls `context.go` on a dead element. It also leaks into widget tests
+  /// as a pending timer, which is how this was caught.
+  Timer? _handoffTimer;
+
+  static const _minimumDwell = Duration(milliseconds: 1400);
+
   @override
   void initState() {
     super.initState();
-    _resolveDestination();
+    _scheduleHandoff();
   }
 
   /// Decides where to go next.
   ///
   /// Module 01 has no auth, so this is a deliberate minimum dwell that lets the
-  /// brand register rather than flashing past. Module 02 replaces the delay
-  /// with the real check and keeps the dwell as a floor, so a fast auth
-  /// resolution does not produce a jarring flicker.
-  Future<void> _resolveDestination() async {
-    await Future<void>.delayed(const Duration(milliseconds: 1400));
-    if (!mounted) return;
-    context.go(AppRoutes.home);
+  /// brand register rather than flashing past. Module 02 replaces it with real
+  /// auth-state resolution and keeps the dwell as a floor, so a fast auth
+  /// result does not produce a jarring flicker.
+  void _scheduleHandoff() {
+    _handoffTimer = Timer(_minimumDwell, () {
+      if (!mounted) return;
+      context.go(AppRoutes.home);
+    });
   }
 
   @override
   void dispose() {
+    _handoffTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
