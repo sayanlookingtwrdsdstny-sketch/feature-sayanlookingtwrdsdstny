@@ -2,7 +2,7 @@
 
 > **New session? Read this file first, then `docs/ARCHITECTURE.md`.**
 > Do not start development automatically. Wait for an explicit `START MODULE X`.
-> Last updated: 2026-09-14
+> Last updated: 2026-09-15
 
 ---
 
@@ -15,9 +15,9 @@
 | **Current Version** | `0.1.0` |
 | **Build Number** | `1` (`version: 0.1.0+1`) |
 | **Next Module** | 02 — Authentication |
-| **Next Module Status** | ⛔ **Blocked** — see "Blockers" below |
+| **Next Module Status** | ⛔ **Blocked on one user step: `firebase login`** |
 
-**Do not begin Module 02 without resolving the Firebase blocker.**
+Region is decided (India, `asia-south1`) and FlutterFire CLI 1.4.1 is installed. The only thing left before Module 02 is the user running `firebase login` (interactive browser sign-in). Verify with `firebase login:list`. **Do not begin Module 02 until that shows an account.**
 
 ---
 
@@ -35,7 +35,14 @@ Two things are required, and **only the user can do them**:
    - US → `us-central1` (HIPAA; note the **AI provider** also needs a BAA, which many consumer LLM APIs will not sign — this constrains Module 05)
 2. **Run `flutterfire configure`** — it needs an interactive Google login.
 
-**Status: user deferred the region decision on 2026-09-14.** Firebase is carried as the single known deferred item.
+**Decision (2026-09-14): India — Firestore location `asia-south1` (Mumbai).** Permanent.
+
+Notes on what that decision actually binds:
+- A Firebase *project* has no region. The location is fixed when the **Firestore database** is created (`firebase firestore:databases:create "(default)" --location=asia-south1`), and separately for the default **Cloud Storage** bucket. Create both in `asia-south1` so patient data and prescription images share one jurisdiction.
+- Cloud Functions take a region per function; deploy them to `asia-south1` too.
+- Regulatory regime: **India DPDP Act 2023** — explicit consent capture, purpose limitation, breach notification, and a grievance/erasure path. These land in Module 02 (consent at registration) and Module 17 (deletion). Health data is sensitive; treat consent copy as a product requirement, not boilerplate.
+
+**Remaining step only the user can do:** `firebase login` (opens a browser for Google sign-in). FlutterFire CLI is installed at `%LOCALAPPDATA%\Pub\Cache\bin` and on the user PATH. After login, project creation, Firestore/Storage creation in `asia-south1`, and `flutterfire configure` can all be run from the CLI.
 
 `bootstrap.dart` has an explicit seam for this: `initializeBackend()` is a documented no-op that logs a warning. It is deliberately not a fake `Firebase.initializeApp()`, which would look configured while talking to nothing.
 
