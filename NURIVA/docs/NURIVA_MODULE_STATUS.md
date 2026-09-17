@@ -2,7 +2,7 @@
 
 > **New session? Read this file first, then `docs/ARCHITECTURE.md`.**
 > Do not start development automatically. Wait for an explicit `START MODULE X`.
-> Last updated: 2026-09-15
+> Last updated: 2026-09-17
 
 ---
 
@@ -10,41 +10,42 @@
 
 | | |
 |---|---|
-| **Current Module** | 01 — Foundation |
+| **Current Module** | 02 — Authentication |
 | **Module Status** | ✅ Complete |
-| **Current Version** | `0.1.0` |
-| **Build Number** | `1` (`version: 0.1.0+1`) |
-| **Next Module** | 02 — Authentication |
-| **Next Module Status** | ⛔ **Blocked on one user step: `firebase login`** |
+| **Current Version** | `0.2.0` |
+| **Build Number** | `2` (`version: 0.2.0+2`) |
+| **Next Module** | 03 — Patient & Guardian |
+| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 03` |
 
-Region is decided (India, `asia-south1`) and FlutterFire CLI 1.4.1 is installed. The only thing left before Module 02 is the user running `firebase login` (interactive browser sign-in). Verify with `firebase login:list`. **Do not begin Module 02 until that shows an account.**
+Firebase project `nuriva-27e59` is live: Firestore + Storage in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed. **Storage stays on the Spark (free) plan by the user's choice** — see "Known issues / limitations" below; this has no effect on Module 02 and only matters starting Module 04.
 
 ---
 
 ## Blockers
 
-### Firebase is not configured — blocks Module 02
+None currently. (Module 02's Firebase blocker is resolved — see below.)
 
-Module 02 is entirely Firebase Auth (login, registration, password reset, session). None of it can be genuinely completed without a Firebase project.
+### Firebase configuration — how it was resolved (2026-09-16/17)
 
-Two things are required, and **only the user can do them**:
+Two things were required, and only the user could do them:
 
-1. **Choose the Firestore region.** It is fixed permanently at project creation and depends on jurisdiction:
-   - India → `asia-south1` (DPDP Act 2023)
-   - EU → `europe-west1` (GDPR: DPA, lawful basis, DSAR tooling)
-   - US → `us-central1` (HIPAA; note the **AI provider** also needs a BAA, which many consumer LLM APIs will not sign — this constrains Module 05)
-2. **Run `flutterfire configure`** — it needs an interactive Google login.
+1. **Choose the Firestore region** — done. **Decision (2026-09-14): India — Firestore location `asia-south1` (Mumbai).** Permanent.
+2. **Run `firebase login` / `flutterfire configure`** — done. Interactive steps the user completed:
+   - `firebase login` (browser sign-in as `sayanlookingtwrdsdstny@gmail.com`)
+   - Enabled the Cloud Firestore API (console click — CLI can't enable APIs on this machine, no `gcloud`)
+   - Created the Firestore database in `asia-south1` via CLI (`firebase firestore:databases:create`)
+   - Set up the default Storage bucket in `asia-south1` via console (Storage has no CLI creation command in this firebase-tools version)
+   - Ran `flutterfire configure` → generated `lib/firebase_options.dart`, registered the Android app, wrote `firebase.json`, `android/app/google-services.json`
+   - Enabled the **Email/Password** sign-in provider in console → Authentication → Sign-in method (`flutterfire configure` does not do this — it only registers the app, not sign-in providers. A registration attempt fails with `CONFIGURATION_NOT_FOUND` until this is on.)
 
-**Decision (2026-09-14): India — Firestore location `asia-south1` (Mumbai).** Permanent.
-
-Notes on what that decision actually binds:
-- A Firebase *project* has no region. The location is fixed when the **Firestore database** is created (`firebase firestore:databases:create "(default)" --location=asia-south1`), and separately for the default **Cloud Storage** bucket. Create both in `asia-south1` so patient data and prescription images share one jurisdiction.
+Notes on what the region decision binds:
+- A Firebase *project* has no region. The location is fixed when the **Firestore database** is created, and separately for the default **Cloud Storage** bucket. Both are in `asia-south1` so patient data and prescription images share one jurisdiction.
 - Cloud Functions take a region per function; deploy them to `asia-south1` too.
-- Regulatory regime: **India DPDP Act 2023** — explicit consent capture, purpose limitation, breach notification, and a grievance/erasure path. These land in Module 02 (consent at registration) and Module 17 (deletion). Health data is sensitive; treat consent copy as a product requirement, not boilerplate.
+- Regulatory regime: **India DPDP Act 2023** — explicit consent capture, purpose limitation, breach notification, and a grievance/erasure path. Consent-at-registration landed in Module 02; deletion is Module 17.
 
-**Remaining step only the user can do:** `firebase login` (opens a browser for Google sign-in). FlutterFire CLI is installed at `%LOCALAPPDATA%\Pub\Cache\bin` and on the user PATH. After login, project creation, Firestore/Storage creation in `asia-south1`, and `flutterfire configure` can all be run from the CLI.
+`bootstrap.dart`'s `initializeBackend()` now calls `Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform)` — no longer the Module 01 no-op.
 
-`bootstrap.dart` has an explicit seam for this: `initializeBackend()` is a documented no-op that logs a warning. It is deliberately not a fake `Firebase.initializeApp()`, which would look configured while talking to nothing.
+`firebase_options.dart` and `android/app/google-services.json` are committed. Both hold public client identifiers (API key, app ID, project ID), not secrets — access is enforced by Firestore/Storage Rules, not by hiding this file. This matches Firebase's own guidance for client apps.
 
 ---
 
@@ -158,9 +159,118 @@ because both only appear when the widgets are composed into real screens.
 
 ### Deferred features
 
-- Firebase initialization + App Check → Module 02
+- Firebase initialization + App Check → Module 02 (initialization done in Module 02; **App Check deferred to Module 17**, see below)
 - Launcher icon PNG densities → before external distribution
 - Widget/golden tests for reminder screens → Modules 10–11, where layout regressions become a safety issue
+
+---
+
+## Module 02 — Authentication (v0.2.0) ✅
+
+### Completed features
+
+- Firebase project `nuriva-27e59` created; Firestore + Storage in `asia-south1`
+- Firebase Authentication, email/password, wired end-to-end (`bootstrap.dart` now calls `Firebase.initializeApp`)
+- Registration → email verification → profile completion → home, matching ARCHITECTURE.md §5's state machine exactly
+- Sign-in, sign-out, forgot-password (neutral response — never reveals whether an address has an account)
+- Consent capture at registration (`kPrivacyNoticeVersion`, DPDP Act 2023) with a dedicated privacy-notice screen
+- `users/{uid}` Firestore profile document, created once at registration (or at profile-completion recovery), never client-updated after
+- `firestore.rules` — deny-by-default; only the `users/{uid}` create/read shape used by Module 02 is allowed, everything else explicitly closed pending its owning module
+- `storage.rules` — deny-all (nothing in Module 02 touches Storage)
+- `SessionRouteGuard` drives all navigation off `AuthSession` — no screen navigates on its own auth event
+
+### Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Welcome | `/welcome` | Entry point for a signed-out user |
+| Sign in | `/login` | |
+| Register | `/register` | Role selection (self / family member / both), consent checkbox, links to the privacy notice |
+| Privacy notice | `/privacy` | Reachable signed-out (from registration) and signed-in (`NeedsProfile`) |
+| Forgot password | `/forgot-password` | Carries a typed email across from sign-in via a query param |
+| Verify email | `/verify-email` | Polls `reloadUser`; cooldown on resend; "use a different account" signs out |
+| Complete profile | `/complete-profile` | Recovery path for an account whose profile write never completed |
+| Home | `/home` | Replaces Module 01's `foundation_home_screen.dart` (deleted) — real signed-in state, shows profile + build status |
+
+### Files created
+
+```
+lib/features/auth/domain/       auth_models · auth_repositories · auth_validators · account_service
+lib/features/auth/data/         firebase_auth_repository · firestore_profile_repository · auth_error_mapper
+lib/features/auth/application/  auth_providers · session_route_guard
+lib/features/auth/presentation/ welcome · sign_in · register · forgot_password · privacy_notice
+                                 verify_email · complete_profile · auth_copy
+                                 widgets/account_fields · widgets/auth_scaffold
+lib/features/home/presentation/ home_screen.dart (replaces foundation_home_screen.dart)
+lib/core/config/                app_version.dart · legal.dart
+lib/core/design/                nuriva_inline_message.dart
+lib/firebase_options.dart       generated by flutterfire configure — public client config, safe to commit
+firebase.json, firestore.rules, storage.rules
+android/app/google-services.json
+```
+
+### Files modified
+
+- `pubspec.yaml` — version `0.1.0+1` → `0.2.0+2`; added `firebase_core`, `firebase_auth`, `cloud_firestore`
+- `bootstrap.dart` — `initializeBackend()` now calls `Firebase.initializeApp`, no longer a no-op
+- `app_router.dart`, `app_routes.dart`, `route_guard.dart` — auth routes + `SessionRouteGuard` wiring
+- `design.dart`, `nuriva_surfaces.dart` — additions used by the auth screens
+- `app_failure.dart` — auth/Firestore failure variants
+- `splash_screen.dart` — Module 01's fixed dwell now hands off into real session resolution
+- `android/gradle.properties` — see "Environment gotchas" below (Kotlin build workaround)
+
+### Files removed
+
+- `lib/features/home/presentation/foundation_home_screen.dart` — superseded by `home_screen.dart`
+
+### Dependencies
+
+**Added:** `firebase_core`, `firebase_auth`, `cloud_firestore`.
+
+**Not added yet, deliberately:** `firebase_app_check` (Module 17 — see below), Storage SDK usage beyond the generated config (Module 04).
+
+### Database changes
+
+`users/{uid}` is now a real, live collection with one document shape:
+```
+{ uid, displayName, email, roles: [...], consent: { version, acceptedAt }, createdAt, updatedAt }
+```
+Every other path in `core/constants/firestore_paths.dart` remains unused until its owning module, and `firestore.rules` denies them explicitly rather than leaving them to a project default.
+
+### Testing completed
+
+**191 tests passing** (up from 141 in Module 01), `flutter analyze` clean.
+
+Basic functional testing per §5 — no advanced testing performed. Unit/widget tests cover registration, sign-in, sign-out, forgot-password, verification, session routing and the Firestore rule shape (all against fakes). **Live-device functional testing was also done against the real `nuriva-27e59` backend** (not just fakes) — see below.
+
+#### Live-device verification (2026-09-17, physical phone via ADB)
+
+Every step below was confirmed against the real Firebase project, not a fake:
+
+1. App boots, Firebase initializes, lands on Welcome (signed-out) — confirmed via screenshot
+2. Registration creates a real Firebase Auth user **and** the matching `users/{uid}` Firestore document (confirmed independently in the Firebase console — both existed)
+3. Email verification link (sent by Firebase, landed in spam) → app correctly detects verification and routes to Home
+4. Home renders the real profile (name, email, role chip) and correctly reports Module 03 as pending
+5. Sign-out → Welcome; sign back in with the same credentials → Home (confirmed manually — see below)
+
+#### Two real defects the live device run caught (neither is a code bug)
+
+1. **`CONFIGURATION_NOT_FOUND` on the first registration attempt.** `flutterfire configure` registers the Firebase *app* but does not enable any sign-in *provider*. Email/Password had to be turned on manually in Console → Authentication → Sign-in method. Documented in "Blockers" above so it isn't rediscovered.
+2. **Android autofill kept substituting the tester's real Google account** (name + email, and once appears to have supplied a saved password) into the registration form when fields were tapped via ADB, instead of the intended throwaway test values. Not an app bug — it is Android's autofill service reacting to a real signed-in device. Worth knowing for any future on-device testing session: prefer typing values explicitly (`adb shell input text`) over tapping-then-assuming-the-field-is-empty, or disable autofill for the app during testing.
+
+Because of defect 2, the real Firebase project now has one live user (`sayanlookingtwrdsdstny@gmail.com`) created during testing. Left in place rather than deleted, since deleting a real user via a scripted export was itself denied by the permission classifier as too sensitive an action to automate — deleting it, if wanted, is a one-click action in Console → Authentication → Users.
+
+### Known issues / limitations
+
+1. **Storage stays on the Spark (free) plan by explicit user choice.** Module 02 needs no Storage access, so this has zero effect now. It becomes relevant at **Module 04** (prescription image upload), which needs the Blaze plan (Google requires it for any Storage bucket created after late 2024). Revisit then — Blaze still has a real free tier; it requires linking a billing account, not a subscription charge.
+2. **App Check is deferred to Module 17**, not wired now. ARCHITECTURE.md §5 calls for it alongside Firebase Auth, but wiring it without the Firestore/Storage rules and attestation config that go with it would be security theatre rather than real hardening — Module 17 owns all of that together.
+3. Sign-out was verified manually on-device rather than via ADB automation — synthetic `input tap` events did not reliably trigger the `IconButton`'s response (likely a splash/hit-test timing issue with instant synthetic taps), and repeated attempts were abandoned in favor of the user confirming manually. Not a product defect.
+
+### Deferred features
+
+- App Check → Module 17
+- Storage rules beyond deny-all → Module 04 (needs Blaze plan first)
+- Profile editing (`update` on `users/{uid}`) → whichever module first needs it; `firestore.rules` currently denies all updates
 
 ---
 
@@ -169,14 +279,13 @@ because both only appear when the widgets are composed into real screens.
 | | |
 |---|---|
 | Command | `flutter build apk --debug` |
-| Artifact | `NURIVA_Module_01_v0.1.0_debug.apk` |
+| Artifact | `NURIVA_Module_02_v0.2.0_debug.apk` (Module 01's `NURIVA_Module_01_v0.1.0_debug.apk` still present alongside it) |
 | Location | `NURIVA/builds/` (gitignored — binaries are never committed) |
-| Size | **180 MB** — debug builds bundle every ABI plus debug symbols |
-| Verified identity | `package: com.nuriva.app`, `versionName 0.1.0`, `versionCode 1`, `application-label: NURIVA`, `targetSdk 36` |
+| Size | ~169 MB — debug builds bundle every ABI plus debug symbols |
+| Verified identity | `package: com.nuriva.app`, `versionName 0.2.0`, `versionCode 2`, `application-label: NURIVA`, `targetSdk 36` |
 | Signing | Debug keystore — sideload only, **not** Play-ready |
 
-180 MB is awkward to transfer. For sideloading, `flutter build apk --release`
-produces ~45 MB (still debug-signed), and `--split-per-abi` cuts it further.
+For sideloading, `flutter build apk --release` produces a much smaller artifact (still debug-signed), and `--split-per-abi` cuts it further.
 
 ### Environment (verified working)
 
@@ -195,6 +304,7 @@ produces ~45 MB (still debug-signed), and `--split-per-abi` cuts it further.
 2. **The NDK is required even though NURIVA is pure Dart.** The Flutter Gradle Plugin pins `ndkVersion` and AGP resolves it at configure time. Removing the line from `build.gradle.kts` does not help — the plugin re-adds it.
 3. **The Android SDK lives at `D:\dev\android-sdk`, not in the user profile.** It was relocated because a flat-in-profile layout made the SDK manager walk the whole profile and crash on the `AppData\Local\Application Data` junction loop.
 4. **Do not pipe long-running Flutter/Gradle commands through PowerShell `Select-Object`** when you need progress — it buffers the whole stream and a working command looks like a hang.
+5. **Kotlin's incremental compiler can fail to close its own cache files on Windows.** First hit in Module 02, compiling `firebase_core` (the first plugin in this repo with real Kotlin source) — `compileDebugKotlin` failed with *"Could not close incremental caches ... class-fq-name-to-source.tab"*, reproduced identically after a full `flutter clean`. **Fix in `android/gradle.properties`:** `kotlin.compiler.execution.strategy=in-process` and `kotlin.incremental=false` (forces in-process compilation, avoiding the cross-process file handle that triggers it). Do not remove these lines — the failure is deterministic without them, not a one-off flake.
 
 ---
 
@@ -203,9 +313,9 @@ produces ~45 MB (still debug-signed), and `--split-per-abi` cuts it further.
 | # | Module | Version | Status |
 |---|---|---|---|
 | 01 | Foundation | v0.1.0 | ✅ Complete |
-| 02 | Authentication | v0.2.0 | ⛔ Blocked on Firebase |
-| 03 | Patient & Guardian | v0.3.0 | ⬜ |
-| 04 | Prescription Upload | v0.4.0 | ⬜ |
+| 02 | Authentication | v0.2.0 | ✅ Complete |
+| 03 | Patient & Guardian | v0.3.0 | ⬜ Waiting for `START MODULE 03` |
+| 04 | Prescription Upload | v0.4.0 | ⬜ Needs Blaze plan for Storage |
 | 05 | AI/OCR | v0.5.0 | ⬜ Also needs AI provider choice |
 | 06 | Prescription Verification | v0.6.0 | ⬜ |
 | 07 | Guardian Approval | v0.7.0 | ⬜ Safety-critical |

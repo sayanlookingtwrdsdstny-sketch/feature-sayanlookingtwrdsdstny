@@ -11,6 +11,7 @@ export 'nuriva_brand.dart';
 export 'nuriva_button.dart';
 export 'nuriva_feedback.dart';
 export 'nuriva_field.dart';
+export 'nuriva_inline_message.dart';
 export 'nuriva_surfaces.dart';
 export 'nuriva_theme.dart';
 export 'nuriva_tokens.dart';

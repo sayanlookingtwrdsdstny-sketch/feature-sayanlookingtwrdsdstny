@@ -1,19 +1,25 @@
 /// Every route in NURIVA, named once.
 ///
-/// Paths are centralized because two things outside the widget tree need to
-/// construct them: the notification layer, which deep-links a tap straight to
-/// dose confirmation, and the auth guard, which redirects. A typo'd path string
-/// in either place fails silently at runtime.
+/// Paths are centralized because things outside the widget tree construct
+/// them: the notification layer deep-links a tap to dose confirmation, and the
+/// session guard redirects. A typo'd path string in either place fails
+/// silently at runtime.
 abstract final class AppRoutes {
-  // Onboarding / auth
+  // Launch
   static const String splash = '/';
+
+  // Signed-out flow
+  static const String welcome = '/welcome';
   static const String login = '/login';
   static const String register = '/register';
+  static const String forgotPassword = '/forgot-password';
+  static const String privacy = '/privacy';
+
+  // Account completion
   static const String verifyEmail = '/verify-email';
   static const String completeProfile = '/complete-profile';
-  static const String onboarding = '/onboarding';
 
-  // Main shell
+  // Main
   static const String home = '/home';
   static const String medications = '/medications';
   static const String prescriptions = '/prescriptions';
@@ -21,10 +27,8 @@ abstract final class AppRoutes {
   static const String family = '/family';
   static const String settings = '/settings';
 
-  /// Developer-only design system catalogue.
-  ///
-  /// Registered by the router only when `AppConfig.allowDeveloperTools` is
-  /// true, so it is unreachable in a production build.
+  /// Developer-only design system catalogue. Registered by the router only
+  /// when `AppConfig.allowDeveloperTools` is true.
   static const String gallery = '/design-system';
 
   /// Dose confirmation. The deep-link target for a medication reminder.
@@ -38,18 +42,31 @@ abstract final class AppRoutes {
     return '/dose/$doseId';
   }
 
-  /// Routes reachable without an authenticated session.
-  static const Set<String> unauthenticated = {
-    splash,
+  /// Routes reachable without an account.
+  static const Set<String> public = {
+    welcome,
     login,
     register,
+    forgotPassword,
+    privacy,
+  };
+
+  /// Screens that only make sense before the account is fully set up. A
+  /// signed-in user reaching one of these is sent home.
+  static const Set<String> onboardingOnly = {
+    welcome,
+    login,
+    register,
+    forgotPassword,
+    verifyEmail,
+    completeProfile,
   };
 
   /// Whether [location] is reachable while signed out.
-  static bool isPublic(String location) =>
-      unauthenticated.contains(_stripQuery(location));
+  static bool isPublic(String location) => public.contains(pathOf(location));
 
-  static String _stripQuery(String location) {
+  /// [location] without its query string.
+  static String pathOf(String location) {
     final index = location.indexOf('?');
     return index == -1 ? location : location.substring(0, index);
   }

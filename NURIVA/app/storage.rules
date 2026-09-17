@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Nothing in Module 02 touches Storage. Prescription images arrive in
+// Module 04, patient-scoped under prescriptions/{patientId}/{prescriptionId}/...
+// (docs/ARCHITECTURE.md §10). Deny-all until that module defines real rules.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

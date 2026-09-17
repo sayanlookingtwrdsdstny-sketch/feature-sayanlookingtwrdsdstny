@@ -947,5 +947,31 @@ permanently fixing the Firestore region (§15), which depends on a jurisdiction
 decision the user has deferred. A stub `Firebase.initializeApp()` would look
 configured while talking to nothing, which is worse than an honest seam.
 
+### Module 02 (v0.2.0, 2026-09-17)
+
+**1. App Check deferred to Module 17, not wired alongside Auth as §5 says.**
+§5 lists App Check next to Firebase Authentication. It needs Play
+Integrity/DeviceCheck attestation config and works together with the
+Firestore/Storage Rules hardening that Module 17 (Security) owns as one
+piece. Wiring it in isolation now, without that surrounding hardening, would
+be a checkbox with no real protection behind it.
+
+**2. Storage stays on the Spark (free) plan — the user's explicit choice.**
+§0 and §15 assume Blaze is available. Google now requires Blaze to create any
+*new* Storage bucket (a 2024 policy change, not something this document
+anticipated). Module 02 needs no Storage access, so this has zero effect now.
+It becomes a real constraint at Module 04 (prescription images), which must
+either get Blaze approval at that point or the module's scope narrows. Flagged
+here so it isn't rediscovered mid-Module-04.
+
+**3. `firestore.rules` / `storage.rules` added as real files, not deferred.**
+§10's rules posture ("deny by default; every allow is explicit and narrow")
+is now enforced for real, scoped to exactly what Module 02 writes
+(`users/{uid}` create, matching `firestore_profile_repository.dart` field for
+field). Every other collection is explicitly closed rather than left to
+Firestore's undocumented-by-us default, so the rules file — not tribal
+knowledge — is the single source of truth as more modules add their own
+narrow allows.
+
 **Module detail — screens, files, tests, build info — lives in
 `NURIVA_MODULE_STATUS.md`, not here.** This document stays architectural.

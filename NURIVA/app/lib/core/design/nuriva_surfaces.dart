@@ -110,22 +110,33 @@ final class NurivaStatusChip extends StatelessWidget {
         borderRadius: NurivaTokens.brPill,
         border: Border.all(color: color.withValues(alpha: .38)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 15, color: color),
-            const SizedBox(width: NurivaTokens.space1 + 2),
+      // One Text.rich rather than a Row of icon + label. A Row overflowed at
+      // large system font whenever the chip was given less width than its
+      // label; wrapping the label in Flexible instead would throw whenever the
+      // chip sits beside an Expanded (it then receives unbounded width). A
+      // single span does neither: it sizes to its content when unbounded and
+      // wraps to a second line when narrow — readable beats truncated
+      // ("Pend…") for a status an elderly user has to understand.
+      child: Text.rich(
+        TextSpan(
+          children: [
+            if (icon != null) ...[
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Icon(icon, size: 15, color: color),
+              ),
+              const WidgetSpan(
+                child: SizedBox(width: NurivaTokens.space1 + 2),
+              ),
+            ],
+            TextSpan(text: label),
           ],
-          Text(
-            label,
-            style: context.text.bodySmall?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w600,
-              letterSpacing: .2,
-            ),
-          ),
-        ],
+        ),
+        style: context.text.bodySmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+          letterSpacing: .2,
+        ),
       ),
     );
   }

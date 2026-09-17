@@ -1,0 +1,45 @@
+rules_version = '2';
+
+// Module 02 scope only: the `users/{uid}` profile document created at
+// registration / profile completion (see
+// features/auth/data/firestore_profile_repository.dart). Every later
+// collection (patients, prescriptions, dose_logs, ...) is deny-by-default
+// until its owning module defines narrow rules for it — see
+// docs/ARCHITECTURE.md §10.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+
+      // Matches FirestoreProfileRepository.createProfile exactly: only the
+      // owner, only this field set, only server-assigned timestamps.
+      allow create: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.data.uid == uid
+                    && request.resource.data.displayName is string
+                    && request.resource.data.displayName.size() > 0
+                    && request.resource.data.email is string
+                    && request.resource.data.roles is list
+                    && request.resource.data.roles.size() > 0
+                    && request.resource.data.consent is map
+                    && request.resource.data.consent.version is string
+                    && request.resource.data.consent.acceptedAt == request.time
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time
+                    && request.resource.data.keys().hasOnly(
+                         ['uid', 'displayName', 'email', 'roles', 'consent', 'createdAt', 'updatedAt']
+                       );
+
+      // No profile editing yet — Module 03+ adds narrow update rules
+      // (e.g. displayName only, updatedAt re-stamped) when a screen needs it.
+      allow update, delete: if false;
+    }
+
+    // Everything else (patients, prescriptions, dose_logs, ...) belongs to
+    // later modules. Explicitly closed rather than left to the project
+    // default, so this file is the single source of truth.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

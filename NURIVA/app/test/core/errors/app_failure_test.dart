@@ -11,6 +11,7 @@ void main() {
     AppFailure.validation(field: 'email', reason: 'must_not_be_empty'),
     AppFailure.conflict(reason: 'stale_approval_hash'),
     AppFailure.unexpected(),
+    AppFailure.rateLimited(),
   ];
 
   group('factories construct the right variant', () {
@@ -132,6 +133,7 @@ void main() {
             ValidationFailure(:final field) => 'invalid:$field',
             ConflictFailure(:final reason) => 'conflict:$reason',
             UnexpectedFailure() => 'unexpected',
+            RateLimitedFailure() => 'rate_limited',
           };
 
       expect(all.map(describe).toList(), [
@@ -143,6 +145,7 @@ void main() {
         'invalid:email',
         'conflict:stale_approval_hash',
         'unexpected',
+        'rate_limited',
       ]);
     });
   });

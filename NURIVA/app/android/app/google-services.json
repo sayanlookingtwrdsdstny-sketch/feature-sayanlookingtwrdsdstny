@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "461686747284",
+    "project_id": "nuriva-27e59",
+    "storage_bucket": "nuriva-27e59.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:461686747284:android:34ff443516e7d5f5ba8481",
+        "android_client_info": {
+          "package_name": "com.nuriva.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAInIPVV6yvXB4WYSmu6R4cM8GmYnj-7MM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

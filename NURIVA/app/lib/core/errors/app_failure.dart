@@ -69,6 +69,11 @@ sealed class AppFailure {
     Object? cause,
     StackTrace? stackTrace,
   }) = UnexpectedFailure;
+
+  const factory AppFailure.rateLimited({
+    Object? cause,
+    StackTrace? stackTrace,
+  }) = RateLimitedFailure;
 }
 
 /// The device could not reach the backend.
@@ -195,4 +200,19 @@ final class UnexpectedFailure extends AppFailure {
 
   @override
   String get debugMessage => 'Unexpected failure';
+}
+
+/// The backend refused because of too many attempts in a short time.
+///
+/// Distinct from [ConflictFailure] and [NetworkFailure] because the right
+/// response differs: the user should wait, not retry immediately or fix input.
+/// First used by sign-in; later by AI extraction quotas.
+final class RateLimitedFailure extends AppFailure {
+  const RateLimitedFailure({super.cause, super.stackTrace});
+
+  @override
+  String get code => 'rate_limited';
+
+  @override
+  String get debugMessage => 'Rate limited';
 }

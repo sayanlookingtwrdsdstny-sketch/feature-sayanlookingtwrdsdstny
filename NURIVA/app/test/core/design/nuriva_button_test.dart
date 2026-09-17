@@ -120,7 +120,7 @@ void main() {
         const NurivaStatusChip(label: 'Taken', status: NurivaStatus.positive),
       ));
 
-      expect(find.text('Taken'), findsOneWidget);
+      expect(find.text('Taken', findRichText: true), findsOneWidget);
     });
   });
 

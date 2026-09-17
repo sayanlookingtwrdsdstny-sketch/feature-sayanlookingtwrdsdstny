@@ -1,54 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nuriva/app.dart';
-import 'package:nuriva/core/config/app_config.dart';
+import 'package:nuriva/core/config/app_version.dart';
 import 'package:nuriva/core/design/design.dart';
-import 'package:nuriva/core/di/providers.dart';
 
-/// End-to-end smoke test for the whole application.
+import 'support/fake_auth.dart';
+
+/// End-to-end smoke test for the whole application, wired to in-memory fakes.
 ///
-/// The unit tests verify pieces in isolation; this one verifies that the pieces
-/// actually assemble into a running app — DI resolves, the router builds, the
-/// theme applies, and the splash hands off to home. It is the closest thing to
-/// "does it launch" that runs without a device.
-
-Widget _app(AppConfig config) => ProviderScope(
-      overrides: [appConfigProvider.overrideWithValue(config)],
-      child: const NurivaApp(),
-    );
-
-const _devConfig = AppConfig(
-  flavor: Flavor.dev,
-  logLevel: LogLevel.none,
-  defaultGraceMinutes: 30,
-  defaultEscalationMinutes: 30,
-  doseHorizonDays: 14,
-);
-
-const _prodConfig = AppConfig(
-  flavor: Flavor.prod,
-  logLevel: LogLevel.none,
-  defaultGraceMinutes: 30,
-  defaultEscalationMinutes: 30,
-  doseHorizonDays: 14,
-);
-
-/// Sizes the test surface like a real phone.
-///
-/// The default 800x600 is shorter than any modern handset, so content that a
-/// user would actually see scrolls out of the test viewport and reads as
-/// "missing". These are smoke tests for a phone app; test on phone dimensions.
-void _usePhoneSurface(WidgetTester tester) {
-  tester.view
-    ..physicalSize = const Size(1080, 2400)
-    ..devicePixelRatio = 3.0;
-  addTearDown(tester.view.reset);
-}
-
+/// Unit tests verify pieces in isolation; this verifies they assemble into a
+/// running app. It caught two real render defects in Module 01 that analyze,
+/// unit tests and a successful APK build had all missed. Keep it green.
 void main() {
-  testWidgets('app launches and shows the branded splash', (tester) async {
-    await tester.pumpWidget(_app(_devConfig));
+  testWidgets('launches on the branded splash', (tester) async {
+    await tester.pumpWidget(testApp(
+      auth: FakeAuthRepository(),
+      profiles: FakeProfileRepository(),
+    ));
     await tester.pump();
 
     expect(find.text('NURIVA'), findsOneWidget);
@@ -56,103 +23,135 @@ void main() {
     expect(find.byType(NurivaMark), findsOneWidget);
   });
 
-  testWidgets('splash hands off to home without crashing', (tester) async {
-    await tester.pumpWidget(_app(_devConfig));
+  testWidgets('a signed-out user lands on welcome', (tester) async {
+    usePhoneSurface(tester);
+    await tester.pumpWidget(testApp(
+      auth: FakeAuthRepository(),
+      profiles: FakeProfileRepository(),
+    ));
+    await pastSplash(tester);
 
-    // Past the splash dwell.
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Foundation ready'), findsOneWidget);
+    expect(find.textContaining('shared with family'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
+    expect(find.text('I already have an account'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('home lists what the foundation provides', (tester) async {
-    _usePhoneSurface(tester);
-    await tester.pumpWidget(_app(_devConfig));
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
-
-    // Above the fold.
-    expect(find.text('Foundation ready'), findsOneWidget);
-    expect(find.text('Version 0.1.0'), findsOneWidget);
-    expect(find.text('Design system'), findsWidgets);
-
-    // The rest requires scrolling, as it would on a real handset — which also
-    // exercises that the scroll view works.
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -500));
-    await tester.pumpAndSettle();
-    expect(find.text('Architecture'), findsOneWidget);
-
-    // All the way to the bottom, where the roadmap card sits.
-    await tester.scrollUntilVisible(
-      find.textContaining('Module 02'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+  testWidgets('a signed-in user lands on home with their name and version',
+      (tester) async {
+    usePhoneSurface(tester);
+    final fakes = signedInFakes();
+    await tester.pumpWidget(
+      testApp(auth: fakes.auth, profiles: fakes.profiles),
     );
+    await pastSplash(tester);
+
+    expect(find.text('Hello, Asha'), findsOneWidget);
+    expect(find.text('Version ${AppVersion.name}'), findsOneWidget);
+    // NurivaStatusChip renders label+icon as one Text.rich span so it can
+    // wrap instead of overflowing at large font sizes; an icon's WidgetSpan
+    // adds a placeholder character before the text, so only a substring
+    // match — not exact equality — finds it.
+    expect(
+      find.textContaining('My medication', findRichText: true),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('signing out returns to welcome', (tester) async {
+    usePhoneSurface(tester);
+    final fakes = signedInFakes();
+    await tester.pumpWidget(
+      testApp(auth: fakes.auth, profiles: fakes.profiles),
+    );
+    await pastSplash(tester);
+
+    await tester.tap(find.byTooltip('Sign out'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign out of NURIVA?'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Sign out'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('Module 02'), findsOneWidget);
-    expect(find.text('Pending'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.text('Create account'), findsOneWidget);
+    expect(fakes.auth.currentUser, isNull);
+  });
+
+  testWidgets('cancelling sign-out keeps the user signed in', (tester) async {
+    usePhoneSurface(tester);
+    final fakes = signedInFakes();
+    await tester.pumpWidget(
+      testApp(auth: fakes.auth, profiles: fakes.profiles),
+    );
+    await pastSplash(tester);
+
+    await tester.tap(find.byTooltip('Sign out'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Hello, Asha'), findsOneWidget);
+    expect(fakes.auth.currentUser, isNotNull);
   });
 
   testWidgets('developer build exposes the design gallery', (tester) async {
-    _usePhoneSurface(tester);
-    await tester.pumpWidget(_app(_devConfig));
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
+    usePhoneSurface(tester);
+    final fakes = signedInFakes();
+    await tester.pumpWidget(
+      testApp(auth: fakes.auth, profiles: fakes.profiles),
+    );
+    await pastSplash(tester);
 
-    // By tooltip, not by icon: the same palette icon also appears on the
-    // "Design system" row of the foundation list, so byIcon is ambiguous.
-    final entry = find.byTooltip('Design system');
-    expect(entry, findsOneWidget);
-
-    await tester.tap(entry);
+    await tester.tap(find.byTooltip('Design system'));
     await tester.pumpAndSettle();
 
     expect(find.text('Brand'), findsOneWidget);
-    expect(find.text('TAKEN'), findsOneWidget);
-    expect(find.byType(NurivaButton), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('production build hides the design gallery entirely',
+  testWidgets('production build has no route to the design gallery',
       (tester) async {
-    _usePhoneSurface(tester);
-    await tester.pumpWidget(_app(_prodConfig));
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
+    usePhoneSurface(tester);
+    final fakes = signedInFakes();
+    await tester.pumpWidget(testApp(
+      auth: fakes.auth,
+      profiles: fakes.profiles,
+      config: prodConfig,
+    ));
+    await pastSplash(tester);
 
-    // Not merely hidden in the UI — the route is never registered, so the
-    // gallery is unreachable in production even by deep link.
     expect(find.byTooltip('Design system'), findsNothing);
   });
 
-  testWidgets('renders in dark theme without exploding', (tester) async {
+  testWidgets('renders welcome in dark theme', (tester) async {
+    usePhoneSurface(tester);
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
 
-    await tester.pumpWidget(_app(_devConfig));
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(testApp(
+      auth: FakeAuthRepository(),
+      profiles: FakeProfileRepository(),
+    ));
+    await pastSplash(tester);
 
-    expect(find.text('Foundation ready'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('clamps oversized system text instead of overflowing',
-      (tester) async {
-    // A user with maximum system font size must still get a usable screen;
-    // unbounded scaling would later push a dose action off screen.
+  testWidgets('survives 3x system font on welcome and home', (tester) async {
+    usePhoneSurface(tester);
     tester.platformDispatcher.textScaleFactorTestValue = 3.0;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
-    await tester.pumpWidget(_app(_devConfig));
-    await tester.pump(const Duration(milliseconds: 1500));
-    await tester.pumpAndSettle();
+    final fakes = signedInFakes();
+    final errors = await collectFlutterErrors(() async {
+      await tester.pumpWidget(
+        testApp(auth: fakes.auth, profiles: fakes.profiles),
+      );
+      await pastSplash(tester);
+    });
 
-    expect(tester.takeException(), isNull);
-    expect(find.text('Foundation ready'), findsOneWidget);
+    expect(errors, isEmpty, reason: errors.join('\n\n'));
+    expect(find.text('Hello, Asha'), findsOneWidget);
   });
 }
