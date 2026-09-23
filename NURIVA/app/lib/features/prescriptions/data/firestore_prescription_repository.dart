@@ -87,6 +87,19 @@ final class FirestorePrescriptionRepository implements PrescriptionRepository {
         onError: _mapFirestoreError,
       );
 
+  @override
+  Future<Result<void>> updateStatus({
+    required String prescriptionId,
+    required PrescriptionStatus status,
+  }) =>
+      guardAsync(
+        () => _doc(prescriptionId).update({
+          'status': status.wire,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }),
+        onError: _mapFirestoreError,
+      );
+
   static AppFailure _mapFirestoreError(Object error, StackTrace stack) =>
       switch (error) {
         FirebaseException(:final code) =>

@@ -256,9 +256,34 @@ service cloud.firestore {
                          'createdAt', 'updatedAt'
                        ]);
 
-      // No edits after upload yet — Module 05 owns the status transitions
-      // that follow AI/OCR extraction.
-      allow update: if false;
+      // Module 05 (on-device OCR) owns the extraction state machine, and
+      // these are the only edges in it:
+      //
+      //   UPLOADED   -> PROCESSING    starting a run
+      //   FAILED     -> PROCESSING    retrying one
+      //   PROCESSING -> EXTRACTED     text was read
+      //   PROCESSING -> FAILED        it wasn't
+      //
+      // `status` (with its `updatedAt` stamp) is the only field any client
+      // may ever change on a prescription — patient, uploader, page count
+      // and mime type stay exactly as uploaded. §10 requires the machine to
+      // be enforced here rather than trusted from the app, so a tampered
+      // client cannot jump a prescription straight to EXTRACTED without a
+      // run having happened.
+      allow update: if request.auth != null
+                    && canSeePrescriptionsOf(resource.data.patientId)
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'updatedAt'])
+                    && request.resource.data.updatedAt == request.time
+                    && (
+                         ((resource.data.status == 'UPLOADED'
+                            || resource.data.status == 'FAILED')
+                           && request.resource.data.status == 'PROCESSING')
+                         ||
+                         (resource.data.status == 'PROCESSING'
+                           && (request.resource.data.status == 'EXTRACTED'
+                               || request.resource.data.status == 'FAILED'))
+                       );
 
       // Only while UPLOADED — nothing to undo once extraction has looked at
       // it. The uploader or the patient's primary guardian may delete;
@@ -269,6 +294,51 @@ service cloud.firestore {
                     && resource.data.status == 'UPLOADED'
                     && (resource.data.uploadedByUid == request.auth.uid
                         || isActivePrimaryOf(resource.data.patientId));
+
+      // Module 05: one record per on-device OCR run.
+      //
+      // Authorization has to come from the *parent* prescription, since an
+      // extraction has no patientId of its own — one get(), well inside
+      // Firestore's 10-document budget for a single-document rule.
+      match /extractions/{extractionId} {
+        function parentPatientId() {
+          return get(/databases/$(database)/documents/prescriptions/$(prescriptionId))
+                   .data.patientId;
+        }
+
+        allow read: if request.auth != null
+                    && canSeePrescriptionsOf(parentPatientId());
+
+        // Matches ExtractionService.extract / FirestoreExtractionRepository
+        // .createExtraction exactly. `engine` is pinned to the on-device
+        // value: nothing in this build may claim a result came from
+        // somewhere else, and a future engine gets its own explicit allow
+        // rather than inheriting this one.
+        allow create: if request.auth != null
+                      && canSeePrescriptionsOf(parentPatientId())
+                      && request.resource.data.createdByUid == request.auth.uid
+                      && request.resource.data.engine == 'MLKIT_ON_DEVICE'
+                      && request.resource.data.status in
+                           ['EXTRACTED', 'NEEDS_REVIEW', 'FAILED']
+                      && request.resource.data.engineVersion is string
+                      && request.resource.data.rawLines is list
+                      && request.resource.data.rawLines.size() <= 2000
+                      && request.resource.data.candidates is list
+                      && request.resource.data.candidates.size() <= 50
+                      && request.resource.data.pagesProcessed is int
+                      && request.resource.data.warnings is list
+                      && request.resource.data.createdAt == request.time
+                      && request.resource.data.keys().hasOnly([
+                           'engine', 'engineVersion', 'status', 'rawLines',
+                           'candidates', 'pagesProcessed', 'warnings',
+                           'createdByUid', 'createdAt'
+                         ]);
+
+        // Append-only. An extraction is the record of what a device read off
+        // a page at one moment; a verifier's corrections are Module 06's own
+        // artifact, not an edit that erases what OCR actually said.
+        allow update, delete: if false;
+      }
     }
 
     // Everything else (medications, dose_logs, ...) belongs to later

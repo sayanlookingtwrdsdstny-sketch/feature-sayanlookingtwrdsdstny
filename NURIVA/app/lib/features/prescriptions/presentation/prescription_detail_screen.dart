@@ -8,6 +8,7 @@ import 'package:nuriva/core/design/design.dart';
 import 'package:nuriva/features/prescriptions/application/prescription_providers.dart';
 import 'package:nuriva/features/prescriptions/domain/prescription_models.dart';
 import 'package:nuriva/features/prescriptions/presentation/prescription_copy.dart';
+import 'package:nuriva/features/prescriptions/presentation/widgets/extraction_panel.dart';
 
 /// One prescription: its pages (where available on this device) and its
 /// metadata, with a delete action while it's still `UPLOADED`.
@@ -162,6 +163,7 @@ final class _PrescriptionBody extends ConsumerWidget {
               child: Center(child: CircularProgressIndicator()),
             ),
         },
+        ExtractionPanel(prescription: prescription),
       ],
     );
   }

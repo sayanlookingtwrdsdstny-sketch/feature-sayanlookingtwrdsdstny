@@ -91,6 +91,42 @@ final class FakePrescriptionRepository implements PrescriptionRepository {
     if (prescription != null) _changed.add(prescription.patientId);
     return const Success(null);
   }
+
+  /// Every status this repository was asked to write, in order — so a test
+  /// can assert the *path* through the state machine, not just where it
+  /// ended up.
+  final List<PrescriptionStatus> statusWrites = [];
+
+  @override
+  Future<Result<void>> updateStatus({
+    required String prescriptionId,
+    required PrescriptionStatus status,
+  }) async {
+    final injected = _consumeFailure<void>();
+    if (injected != null) return injected;
+
+    statusWrites.add(status);
+    final existing = _byId[prescriptionId];
+    if (existing == null) {
+      return const Failure(AppFailure.notFound(entity: 'prescription'));
+    }
+    seed(
+      Prescription(
+        id: existing.id,
+        patientId: existing.patientId,
+        uploadedByUid: existing.uploadedByUid,
+        mimeType: existing.mimeType,
+        pageCount: existing.pageCount,
+        status: status,
+        prescribedDate: existing.prescribedDate,
+        doctorName: existing.doctorName,
+        clinicName: existing.clinicName,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+      ),
+    );
+    return const Success(null);
+  }
 }
 
 /// In-memory local image "store". **Tests only.** Keeps bytes in a map

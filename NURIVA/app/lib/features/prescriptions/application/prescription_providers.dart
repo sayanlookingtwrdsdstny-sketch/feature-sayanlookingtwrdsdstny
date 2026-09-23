@@ -2,12 +2,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nuriva/features/patients/application/patient_providers.dart';
 import 'package:nuriva/features/patients/domain/patient_models.dart';
+import 'package:nuriva/features/prescriptions/application/extraction_service.dart';
 import 'package:nuriva/features/prescriptions/application/prescription_service.dart';
 import 'package:nuriva/features/prescriptions/data/device_image_capture_service.dart';
+import 'package:nuriva/features/prescriptions/data/firestore_extraction_repository.dart';
 import 'package:nuriva/features/prescriptions/data/firestore_prescription_repository.dart';
 import 'package:nuriva/features/prescriptions/data/local_prescription_image_store.dart';
+import 'package:nuriva/features/prescriptions/data/mlkit_ocr_engine.dart';
+import 'package:nuriva/features/prescriptions/domain/extraction_models.dart';
+import 'package:nuriva/features/prescriptions/domain/extraction_repositories.dart';
 import 'package:nuriva/features/prescriptions/domain/image_capture_service.dart';
 import 'package:nuriva/features/prescriptions/domain/local_image_store.dart';
+import 'package:nuriva/features/prescriptions/domain/ocr_engine.dart';
 import 'package:nuriva/features/prescriptions/domain/prescription_models.dart';
 import 'package:nuriva/features/prescriptions/domain/prescription_repositories.dart';
 
@@ -30,6 +36,34 @@ final prescriptionServiceProvider = Provider<PrescriptionService>(
     prescriptions: ref.watch(prescriptionRepositoryProvider),
     localImages: ref.watch(localImageStoreProvider),
   ),
+);
+
+final extractionRepositoryProvider = Provider<ExtractionRepository>(
+  (ref) => FirestoreExtractionRepository(FirebaseFirestore.instance),
+);
+
+/// ML Kit holds a native detector open until it is closed, so this provider
+/// owns that lifetime explicitly rather than leaking one per extraction.
+final ocrEngineProvider = Provider<OcrEngine>((ref) {
+  final engine = MlKitOcrEngine();
+  ref.onDispose(engine.dispose);
+  return engine;
+});
+
+final extractionServiceProvider = Provider<ExtractionService>(
+  (ref) => ExtractionService(
+    prescriptions: ref.watch(prescriptionRepositoryProvider),
+    extractions: ref.watch(extractionRepositoryProvider),
+    localImages: ref.watch(localImageStoreProvider),
+    ocr: ref.watch(ocrEngineProvider),
+  ),
+);
+
+/// Every extraction run recorded for a prescription, newest first.
+final extractionsProvider =
+    StreamProvider.family<List<PrescriptionExtraction>, String>(
+  (ref, prescriptionId) =>
+      ref.watch(extractionRepositoryProvider).watchExtractions(prescriptionId),
 );
 
 /// Every prescription recorded for [patientId].

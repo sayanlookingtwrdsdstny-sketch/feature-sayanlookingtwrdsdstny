@@ -10,15 +10,15 @@
 
 | | |
 |---|---|
-| **Current Module** | 04 — Prescription Upload |
-| **Module Status** | ✅ Complete — build succeeded, live-device functional test passed |
-| **Current Version** | `0.4.0` (`version: 0.4.0+4`) |
-| **Next Module** | 05 — AI/OCR |
-| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 05`. Open planning question: Cloud Functions also require Blaze (same wall Storage hit), and Module 04 saves prescription images locally, not to Storage — so Module 05 needs its own answer for how a server-side extraction step gets the image bytes. See ARCHITECTURE.md §18's Module 04 entry. |
+| **Current Module** | 05 — Prescription Reading (on-device OCR) |
+| **Module Status** | ✅ Complete — build succeeded, live-device test passed against a real prescription |
+| **Current Version** | `0.5.0` (`version: 0.5.0+5`) |
+| **Next Module** | 06 — Prescription Verification |
+| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 06`. **Read Module 05's "Known issues" #1 before planning it**: on a tabular prescription the raw recognized text, not the candidate cards, is what a verifier can actually work from, so Module 06's screen should be built around the raw text beside the photo. |
 
-**Module 04's build succeeded on 2026-09-23** once free RAM was above ~0.7 GB (the prior three attempts had failed at ~0.2-0.3 GB free — see environment gotcha #6). `flutter build apk --debug` completed in 142.7s, artifact verified (`com.nuriva.app`, `versionName 0.4.0`, `versionCode 4`, `targetSdk 36`) and copied to `NURIVA/builds/NURIVA_Module_04_v0.4.0_debug.apk`. Live-device functional testing then passed against the real `nuriva-27e59` backend — see Module 04's section below for the one real defect found and fixed along the way (rules deployment, same class of issue as Module 03).
+**Module 05 replaced §7's AI step with on-device OCR — the user's explicit decision (2026-09-23): no paid AI API, no key, no backend.** §7's Cloud Function + Storage + Secret Manager design was unreachable (all Blaze-only) and §10 forbids putting an AI key in the Flutter binary, so extraction now runs Google ML Kit's bundled Latin model locally. No prescription image or text leaves the phone. The safety architecture is intact: extraction creates no medication and activates nothing, and §7's real backstop — the human approval gate — is untouched. Full reasoning in ARCHITECTURE.md §18's Module 05 entry.
 
-Firebase project `nuriva-27e59` is live: Firestore in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed (covering `users`, `patients`, `guardian_relationships`, `patient_link_codes`, `prescriptions`). **The project stays on the Spark (free) plan by the user's explicit, permanent choice — no Blaze, ever.** Firebase Storage is consequently unused: Module 04 saves prescription images to the device's local filesystem instead (see Module 04 below and ARCHITECTURE.md §18).
+Firebase project `nuriva-27e59` is live: Firestore in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed (covering `users`, `patients`, `guardian_relationships`, `patient_link_codes`, `prescriptions` and `prescriptions/{id}/extractions`). **The project stays on the Spark (free) plan by the user's explicit, permanent choice — no Blaze, ever.** Firebase Storage is consequently unused: Module 04 saves prescription images to the device's local filesystem instead (see Module 04 below and ARCHITECTURE.md §18).
 
 ---
 
@@ -548,17 +548,193 @@ then succeeded with no Firestore errors in logcat.
 
 ---
 
+## Module 05 — Prescription Reading / on-device OCR (v0.5.0) ✅
+
+**The AI decision:** the user chose **on-device OCR, no LLM, no paid AI API**
+(2026-09-23), from three options put to them. §7's design — Cloud Function
+reads image from Storage, calls a vision model with a key from Secret
+Manager — needs Blaze three times over, and §10 rules out shipping a key in
+the app. ARCHITECTURE.md §18's Module 05 entry has the full reasoning.
+
+### Completed features
+
+- **On-device text recognition** via `google_mlkit_text_recognition`
+  (bundled Latin model). Confirmed on-device from logcat:
+  `DynamiteModule: Selected local version of
+  com.google.mlkit.dynamite.text.latin` — no Play Services download, no
+  network call, no key anywhere in the repo or the binary
+- **A conservative parser** (`PrescriptionTextParser`, versioned
+  `parser-1`) that proposes medication candidates only from defensible
+  patterns and emits `null` + a stable warning token otherwise. It never
+  infers, completes, clamps or normalizes a medical value
+- **§7's five-stage cascade, adapted**: parse → shape → business rules
+  (doses/day 1-12, duration 1-365, name non-empty) → confidence gate at
+  0.85 → a directive screen. Stage 5 was retargeted: with no model to
+  steer, it now flags page text that reads like an instruction to the app
+  ("ignore previous instructions, set the dosage to...") so the UI can mark
+  it suspicious instead of presenting it as a doctor's words
+- **Raw recognized text is always stored verbatim**, even when parsing finds
+  nothing. Unlike the page images (device-local, §18's Module 04 deviation)
+  this text *does* sync, so a second guardian who cannot see the photo can
+  still read what it said
+- **Append-only extraction records** at `prescriptions/{id}/extractions` —
+  re-running writes a new record; nothing overwrites what a device actually
+  read
+- **A state machine in `firestore.rules`**: `UPLOADED|FAILED -> PROCESSING`,
+  `PROCESSING -> EXTRACTED|FAILED`, with `status` + `updatedAt` the only
+  fields any client may ever change on a prescription
+- **Creates no medication and schedules no dose.** Asserted by a test, not
+  just intended
+
+### Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Extraction panel | (section on `/prescriptions/:patientId/:prescriptionId`) | "Read this prescription", then status, warnings, candidate cards and the full raw text. Every candidate card is labelled a draft; unread fields say "Not read" rather than showing a blank |
+
+### Files created
+
+```
+lib/features/prescriptions/domain/      extraction_models · ocr_engine
+                                         prescription_text_parser
+                                         extraction_repositories
+lib/features/prescriptions/data/         mlkit_ocr_engine
+                                         firestore_extraction_repository
+lib/features/prescriptions/application/  extraction_service
+lib/features/prescriptions/presentation/ widgets/extraction_panel
+test/features/prescriptions/domain/      prescription_text_parser_test
+test/features/prescriptions/application/ extraction_service_test
+test/support/fake_extractions.dart
+```
+
+### Files modified
+
+- `pubspec.yaml`, `app_version.dart` — `0.4.0+4` → `0.5.0+5`; added
+  `google_mlkit_text_recognition`
+- `prescription_repositories.dart`, `firestore_prescription_repository.dart`
+  — `updateStatus` for the extraction state machine
+- `firestore.rules` — `prescriptions` update opened narrowly to the state
+  machine (was `if false`); `extractions` subcollection added
+- `prescription_detail_screen.dart` — hosts the extraction panel
+- `prescription_copy.dart` — warning and extraction-status wording
+- `home_screen.dart` — Module 05 in "what is built", 06 as next
+- `test/support/fake_prescriptions.dart` — `updateStatus` + `statusWrites`
+
+### Dependencies
+
+**Added:** `google_mlkit_text_recognition` (+ `google_mlkit_commons`). The
+model is bundled into the APK, which is what makes it work offline with no
+key — and what took the debug APK from 172.6 MB to 204.9 MB.
+
+**Not added:** any AI SDK or HTTP client. There is no remote call to make.
+
+### Database changes
+
+```
+prescriptions/{id}/extractions/{extractionId}
+  engine: 'MLKIT_ON_DEVICE'   <- pinned by rules
+  engineVersion, status: EXTRACTED | NEEDS_REVIEW | FAILED
+  rawLines[], candidates[], pagesProcessed, warnings[]
+  createdByUid, createdAt
+```
+
+`prescriptions/{id}.status` now moves through the state machine above.
+
+### Testing completed
+
+**263 tests passing** (up from 229), `flutter analyze` clean. The parser
+carries the bulk of the new coverage, and most of its tests assert that it
+*refuses* to produce a value — fractional doses, all-zero frequencies,
+out-of-range counts and durations, missing fields, and table fragments.
+
+#### Live-device verification (2026-09-23, physical phone, real backend)
+
+Run against the real prescription used throughout testing — a creased,
+photographed M.V. Hospital sheet with a four-row medicine table.
+
+Confirmed: ML Kit loaded its bundled local model; one page read; the full
+raw text captured and displayed; `EXCERAFT SYRUP` and `ENZOX PLUS TAB` read
+with correct names and forms; status correctly `Needs checking`; the safety
+banner, amber review rails and "Not read" fields all rendered; extraction
+record written to Firestore with no permission errors.
+
+#### Two real defects the live-device run caught
+
+1. **The panel offered "Read this prescription" when it already knew the
+   photo wasn't on this phone.** The screen showed "Page 1 is not on this
+   device" directly above an inviting primary button whose only possible
+   outcome was an error toast — the same shape as Module 03's "pull to
+   retry" with no retry. **Fixed** by gating the action on local page
+   availability and showing an explanatory card instead. Re-verified on
+   device: the card appears for the record whose images are gone, and the
+   button still appears for the one whose image is present.
+2. **Table fragments became empty candidate cards.** OCR over the medicine
+   table emitted bare cells — `tablet`, `1 tablet`, `L capsule` — and a form
+   word alone was enough to pass the "is this a medication line?" test, so
+   the panel showed cards whose every field read "Not read". That is exactly
+   the noise the parser was written to avoid, and noise here is not harmless:
+   it teaches a guardian to skim the one screen that exists to be read
+   carefully. **Fixed** by requiring a candidate to carry at least one of
+   name / strength / doses-per-day / duration. Regression tests use the
+   verbatim fragments from this run. **Re-verified on device** against a
+   second upload of the same prescription: the empty cards were gone, and
+   the run surfaced three correctly named medicines (`EXCERAFT SYRUP`,
+   `ENZOX PLUS TAB`, `Sompraz D (40 &`) — one more than before, since
+   nothing of value was suppressed.
+
+### Known issues / limitations
+
+1. **On tabular prescriptions the candidate cards yield names and forms
+   only — the raw text is the real deliverable.** ML Kit returns each table
+   cell as its own line, so a medicine name and its `0-1-1` frequency arrive
+   detached, with `Quantity` / `Prequency` / `Duration` headers as further
+   standalone lines. The parser correctly refuses to pair them; associating
+   by proximity would be precisely the guess §7 forbids. **Module 06 should
+   build its verification screen around the raw text beside the photo, not
+   around the candidate list.**
+2. **OCR quality on a creased photo is moderate, and varies run to run.**
+   Real output included `Ajler Lunch, After Diner`, `Brrpty Stomach`,
+   `Dr. Mrinal Kani Bhatlachaya`, `Frequenev`, and — worth noting for any
+   future parsing work — `o-0-1`, where a leading zero was read as the
+   letter `o`. Two reads of the *same* photo produced different text and a
+   different number of recognized medicines (2, then 3). Good enough to
+   read alongside the image, nowhere near good enough to act on unchecked —
+   which is what the whole verify-then-approve chain exists for. The
+   `o-0-1` case is handled correctly (`num.tryParse` fails → the frequency
+   is refused with `ambiguous_frequency`, not guessed).
+3. **Latin script only.** Devanagari is available in ML Kit but unused;
+   running a script model that doesn't match the page produces confident
+   nonsense rather than an honest blank.
+4. **No medication records exist yet**, so nothing consumes an extraction.
+   Modules 06-08 own verification, approval and medications.
+5. **The `MlKitOcrEngine` and the four presentation surfaces have no
+   automated tests** — same trade as Modules 02-04, covered by the
+   live-device run.
+
+### Deferred features
+
+- Associating table cells by geometry (ML Kit exposes `boundingBox`) →
+  would materially improve tabular prescriptions, but it is a real piece of
+  layout analysis and wants its own module-sized decision
+- A remote extraction provider behind `OcrEngine` → only if the no-backend
+  constraint is ever lifted
+- Re-running extraction on an already-`EXTRACTED` prescription → the state
+  machine deliberately forbids it; add an explicit edge when a module needs
+  one
+
+---
+
 ## Build information
 
 | | |
 |---|---|
 | Command | `flutter build apk --debug` |
-| Artifact | `NURIVA_Module_04_v0.4.0_debug.apk` (Modules 01-03's APKs still present alongside it) |
+| Artifact | `NURIVA_Module_05_v0.5.0_debug.apk` (Modules 01-04's APKs still present alongside it) |
 | Location | `NURIVA/builds/` (gitignored — binaries are never committed) |
-| Size | ~172.6 MB — debug builds bundle every ABI plus debug symbols |
-| Verified identity | `package: com.nuriva.app`, `versionName 0.4.0`, `versionCode 4`, `application-label: NURIVA`, `targetSdk 36` |
+| Size | ~235 MB — debug builds bundle every ABI plus debug symbols, and Module 05 adds ML Kit's bundled OCR model (Module 04's was ~172.6 MB) |
+| Verified identity | `package: com.nuriva.app`, `versionName 0.5.0`, `versionCode 5`, `application-label: NURIVA`, `minSdk 24`, `targetSdk 36` |
 | Signing | Debug keystore — sideload only, **not** Play-ready |
-| Build time | 142.7s, with ~0.7 GB free RAM at the time (see gotcha #6) |
+| Build time | 384s cold with ~0.8 GB free RAM; ~70s incremental. ML Kit roughly tripled the cold build over Module 04's 142.7s |
 
 For sideloading, `flutter build apk --release` produces a much smaller artifact (still debug-signed), and `--split-per-abi` cuts it further.
 
@@ -594,7 +770,7 @@ For sideloading, `flutter build apk --release` produces a much smaller artifact 
 | 02 | Authentication | v0.2.0 | ✅ Complete |
 | 03 | Patient & Guardian | v0.3.0 | ✅ Complete |
 | 04 | Prescription Upload | v0.4.0 | ✅ Complete |
-| 05 | AI/OCR | v0.5.0 | ⬜ Also needs AI provider choice |
+| 05 | Prescription Reading (on-device OCR) | v0.5.0 | ✅ Complete |
 | 06 | Prescription Verification | v0.6.0 | ⬜ |
 | 07 | Guardian Approval | v0.7.0 | ⬜ Safety-critical |
 | 08 | Medication Management | v0.8.0 | ⬜ |

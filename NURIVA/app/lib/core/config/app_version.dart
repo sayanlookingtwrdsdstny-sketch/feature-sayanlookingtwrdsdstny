@@ -4,8 +4,8 @@
 /// fails the suite if they drift, so a test APK can never display the wrong
 /// version.
 abstract final class AppVersion {
-  static const String name = '0.4.0';
-  static const int build = 4;
-  static const String module = '04';
-  static const String moduleTitle = 'Prescription Upload';
+  static const String name = '0.5.0';
+  static const int build = 5;
+  static const String module = '05';
+  static const String moduleTitle = 'Prescription Reading';
 }

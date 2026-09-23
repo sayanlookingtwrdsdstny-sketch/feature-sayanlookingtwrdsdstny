@@ -1011,5 +1011,59 @@ prescription's image bytes with no server-accessible copy of them
 anywhere. Flagged here so it is a Module 05 planning question, not a
 mid-module surprise.
 
+### Module 05 (v0.5.0, 2026-09-23)
+
+**1. No AI provider. Extraction is on-device OCR (Google ML Kit), not a
+vision model behind a Cloud Function.** §7 routes this step through a
+callable Function that reads the image from Storage and calls a
+`PrescriptionAiProvider` with a key from Secret Manager. Every piece of that
+is unavailable: Cloud Functions, Storage and Secret Manager all require the
+Blaze plan, which the user has permanently declined (see Module 04 above),
+and §10 forbids the obvious workaround — *"No AI key ... ever enters the
+Flutter binary. A Flutter release build is a distributable artifact and must
+be treated as public."*
+
+The user's decision (2026-09-23) was on-device OCR with no paid AI API. So
+`MlKitOcrEngine` runs Google's bundled Latin text-recognition model locally:
+no key, no request, no third-party processor. The open question Module 04
+raised — how a server-side step would get image bytes when no server-visible
+copy exists — is answered by dissolving it. There is no server-side step.
+
+What this costs, and what it does not:
+
+* **Lost:** structured extraction. OCR returns text, not fields.
+  `PrescriptionTextParser` proposes candidates from unambiguous patterns and
+  emits `null` with a warning for everything else, but it is regular
+  expressions over lines, not comprehension.
+* **Kept:** the entire safety architecture. §7's five-stage cascade survives
+  in adapted form (parse, shape, business rules, confidence gate, and a
+  directive screen retargeted from model output to the page's own text),
+  extraction creates no medication and activates nothing, and §7's stated
+  real backstop — defence 4, the human approval gate — is untouched.
+* **Gained:** the strongest privacy posture available under the DPDP Act.
+  No prescription image or text crosses a border, or leaves the handset,
+  because there is nowhere for it to go. §17's open question 1 (whether the
+  AI provider needs a BAA, and how much that narrows provider choice) is
+  moot while this holds.
+
+**2. Practical yield on tabular prescriptions is names and forms only.**
+Established by the live-device run, not assumed. ML Kit returns each table
+cell as its own line, so a medicine name and its `0-1-1` frequency arrive
+detached, with column headers (`Quantity`, `Frequency`, `Duration`) as
+further standalone lines. Line-based parsing cannot associate them, and
+associating them by proximity would be exactly the guess §7 forbids. The
+parser therefore reports the frequency as unread. **On this layout the raw
+recognized text, shown verbatim beside the photo, is the module's real
+deliverable; the candidate cards are a bonus that fires on single-line
+prescriptions.** Module 06 should treat the raw text as the primary surface
+a verifier works from.
+
+**3. `PrescriptionAiProvider` was not created as a seam.** §7 specifies the
+interface to make swapping vendors a server-side deploy. With no server and
+no vendor, an abstraction over one local implementation would be
+speculative. `OcrEngine` is the port that exists — narrow, and enough to
+swap the engine or add a remote one later without touching
+`ExtractionService`.
+
 **Module detail — screens, files, tests, build info — lives in
 `NURIVA_MODULE_STATUS.md`, not here.** This document stays architectural.

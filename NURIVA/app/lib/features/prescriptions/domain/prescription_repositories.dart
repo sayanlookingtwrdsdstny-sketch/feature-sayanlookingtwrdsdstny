@@ -31,4 +31,17 @@ abstract interface class PrescriptionRepository {
   /// (enforced by `firestore.rules`) — nothing to undo once extraction has
   /// looked at it.
   Future<Result<void>> deletePrescription(String prescriptionId);
+
+  /// Moves a prescription along the extraction state machine (Module 05).
+  ///
+  /// Only the edges `UPLOADED -> PROCESSING` and
+  /// `PROCESSING -> EXTRACTED | FAILED` are legal, and `firestore.rules`
+  /// enforces that server-side rather than trusting this client — §10's
+  /// "state-machine validation in Rules". Status is the only field a client
+  /// may ever change on a prescription; everything else stays immutable after
+  /// upload.
+  Future<Result<void>> updateStatus({
+    required String prescriptionId,
+    required PrescriptionStatus status,
+  });
 }

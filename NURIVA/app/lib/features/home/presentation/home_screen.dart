@@ -139,7 +139,7 @@ final class HomeScreen extends ConsumerWidget {
             ),
             const NurivaSectionHeader(
               title: 'What is built',
-              subtitle: 'Modules 01–04',
+              subtitle: 'Modules 01–05',
             ),
             const _BuiltItem(
               icon: Icons.lock_person_outlined,
@@ -157,6 +157,12 @@ final class HomeScreen extends ConsumerWidget {
               title: 'Prescription upload',
               subtitle: 'Camera/gallery capture, saved on-device — see the '
                   "prescription's detail screen for why",
+            ),
+            const _BuiltItem(
+              icon: Icons.document_scanner_outlined,
+              title: 'Reading a prescription',
+              subtitle: 'Your phone reads the text on the photo — nothing is '
+                  'sent anywhere, and nothing is scheduled from it',
             ),
             const _BuiltItem(
               icon: Icons.palette_outlined,
@@ -177,7 +183,7 @@ final class HomeScreen extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          'Module 05 — AI/OCR',
+                          'Module 06 — Prescription Verification',
                           style: context.text.titleMedium,
                         ),
                       ),
@@ -189,7 +195,8 @@ final class HomeScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: NurivaTokens.space2),
                   Text(
-                    'Extract medication details from an uploaded prescription.',
+                    'Check the read-back against the photo and correct it, '
+                    'before any medicine is set up.',
                     style: context.text.bodyMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),
