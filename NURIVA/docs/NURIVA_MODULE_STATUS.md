@@ -16,29 +16,53 @@
 | **Next Module** | 07 — Guardian Approval (safety-critical) |
 | **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 07`. **It opens with a decision, not with code** — see the blocker below. |
 
-### ▲ Module 07 has an open architectural decision
+### ▶ Module 07's architectural decision — MADE (2026-09-23)
 
-§10's security posture is that **no client can bring a dosing schedule into
-existence** — `dose_logs` create is `if false` because only a Cloud Function
-was ever meant to write one. Module 06 preserved the equivalent guarantee
-for medications: `create` accepts only `PENDING_APPROVAL`, and `update` is
-`if false`.
+**Decision: client-side activation, with maximally tight Security Rules,
+plus App Check.** No Cloud Function, no external endpoint, no service
+account, no cost.
 
-Module 07's whole job is to move a medication to `ACTIVE`. With no Cloud
-Functions (Blaze declined, permanently), **something client-side has to
-perform that write**, and no Firestore rule can distinguish "a guardian
-tapped approve in the real app" from "someone with the same credentials
-wrote the document directly". Rules can constrain the *shape* of the
-transition — who, from which state, with a matching `payloadHash` — but they
-cannot supply the trusted-server half §7 assumed.
+The problem: §10's posture is that no client can bring a dosing schedule
+into existence — `dose_logs` create is `if false` because only a Function
+was ever meant to write one, and Module 06 kept the equivalent guarantee
+for medications. Module 07's whole job is moving a medication to `ACTIVE`,
+and with no Functions something client-side must perform that write.
 
-That is a genuine weakening of the design's security posture, in its most
-safety-critical place, and it needs a deliberate decision rather than a rule
-quietly relaxed mid-implementation. Options worth putting to the user, in
-the order they were useful at Module 05: a free-tier serverless endpoint
-holding a privileged key; accepting client-side activation with the
-tightest possible rule plus an audit trail; or narrowing the module. See
-ARCHITECTURE.md §18's Module 06 entry.
+What Rules **can** still enforce, and what Module 07 must therefore
+enforce:
+
+- only `PENDING_APPROVAL -> ACTIVE`
+- only an ACTIVE guardian holding `MANAGE_MEDICATIONS` (or the patient)
+- `request.resource.data.payloadHash == resource.data.payloadHash` — the
+  clinical content provably did not change between draft and approval
+- `approval.approvedByUid == request.auth.uid`,
+  `approval.approvedAt == request.time`
+- a field whitelist via `diff().affectedKeys().hasOnly([...])`
+
+The gap is narrower than it first looks: §7's Function also compares a
+*client-supplied* hash against stored state, so it too trusts the client's
+claim about what was displayed. The genuine losses are an unforgeable audit
+log and atomic multi-document invariants.
+
+**Mitigations that are part of this decision:**
+
+1. **App Check** — free, works on Spark, and attests that a write came from
+   the genuine app binary rather than a script holding stolen credentials.
+   **Caveat, stated honestly: Play Integrity is only real attestation once
+   the app is distributed through Play.** Until then it is the debug
+   provider, which is plumbing, not protection. Module 17 owns turning it
+   on for real; Module 07 should not pretend it is already a control.
+2. **`audit_logs` becomes client-creatable but append-only** — a deviation
+   from §4's "Functions-write-only". `update`/`delete` closed, `actorUid`
+   pinned to `request.auth.uid`, `createdAt` pinned to `request.time`. A
+   client cannot forge another actor, backdate, or erase; it can only
+   decline to write an entry. That residual gap is accepted and recorded.
+
+**This decision sets the pattern for Module 09/11, not just 07.**
+`dose_logs` has the same `if false` posture and the schedule engine
+generates them, so client-written dose history is coming — and it is a
+*bigger* integrity concern than approval, because adherence is what a
+guardian makes decisions from. Revisit the whole picture at Module 17.
 
 **Module 05 replaced §7's AI step with on-device OCR — the user's explicit decision (2026-09-23): no paid AI API, no key, no backend.** §7's Cloud Function + Storage + Secret Manager design was unreachable (all Blaze-only) and §10 forbids putting an AI key in the Flutter binary, so extraction now runs Google ML Kit's bundled Latin model locally. No prescription image or text leaves the phone. Module 06 then made a person, not a model, the one who records a medicine — the fields start empty, so there is no confident-looking draft for a tired guardian to wave through. Full reasoning in ARCHITECTURE.md §18's Module 05 and 06 entries.
 
