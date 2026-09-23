@@ -77,6 +77,8 @@ abstract final class FirestorePaths {
       '$guardianRelationships/'
       '${guardianRelationshipId(patientId: patientId, guardianUid: guardianUid)}';
 
+  static String patientLinkCode(String code) => '$patientLinkCodes/$code';
+
   /// The document ID for a daily adherence rollup.
   ///
   /// `yyyy-MM-dd` in the **patient's** local timezone, not UTC — "how did
@@ -86,22 +88,6 @@ abstract final class FirestorePaths {
     final m = localDate.month.toString().padLeft(2, '0');
     final d = localDate.day.toString().padLeft(2, '0');
     return '$y-$m-$d';
-  }
-
-  // -------------------------------------------------------------------- storage
-
-  /// Storage path for an uploaded prescription file.
-  ///
-  /// Patient-scoped so Storage Rules can authorize on the path itself.
-  static String prescriptionStorage({
-    required String patientId,
-    required String prescriptionId,
-    required String fileName,
-  }) {
-    _requireNonEmpty(patientId, 'patientId');
-    _requireNonEmpty(prescriptionId, 'prescriptionId');
-    _requireNonEmpty(fileName, 'fileName');
-    return '$prescriptions/$patientId/$prescriptionId/$fileName';
   }
 
   static void _requireNonEmpty(String value, String name) {

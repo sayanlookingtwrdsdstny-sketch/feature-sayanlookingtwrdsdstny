@@ -19,6 +19,12 @@ abstract final class AppRoutes {
   static const String verifyEmail = '/verify-email';
   static const String completeProfile = '/complete-profile';
 
+  // Care circle setup — shown to a signed-in user with no patient in their
+  // care circle yet (neither their own self-record nor anyone they guard).
+  static const String careCircleStart = '/care-circle/start';
+  static const String addPatient = '/care-circle/add-patient';
+  static const String joinPatient = '/care-circle/join';
+
   // Main
   static const String home = '/home';
   static const String medications = '/medications';
@@ -26,6 +32,44 @@ abstract final class AppRoutes {
   static const String appointments = '/appointments';
   static const String family = '/family';
   static const String settings = '/settings';
+
+  /// A single patient's detail — guardians, pending requests, invite.
+  static const String patientDetail = '/family/:patientId';
+
+  static String patientDetailFor(String patientId) {
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError.value(patientId, 'patientId', 'must not be empty');
+    }
+    return '/family/$patientId';
+  }
+
+  /// One patient's prescriptions.
+  static const String prescriptionsForPatient = '/prescriptions/:patientId';
+
+  static String prescriptionsFor(String patientId) {
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError.value(patientId, 'patientId', 'must not be empty');
+    }
+    return '/prescriptions/$patientId';
+  }
+
+  /// A single prescription's detail.
+  static const String prescriptionDetail =
+      '/prescriptions/:patientId/:prescriptionId';
+
+  static String prescriptionDetailFor(String patientId, String prescriptionId) {
+    if (patientId.trim().isEmpty) {
+      throw ArgumentError.value(patientId, 'patientId', 'must not be empty');
+    }
+    if (prescriptionId.trim().isEmpty) {
+      throw ArgumentError.value(
+        prescriptionId,
+        'prescriptionId',
+        'must not be empty',
+      );
+    }
+    return '/prescriptions/$patientId/$prescriptionId';
+  }
 
   /// Developer-only design system catalogue. Registered by the router only
   /// when `AppConfig.allowDeveloperTools` is true.
@@ -61,6 +105,14 @@ abstract final class AppRoutes {
     verifyEmail,
     completeProfile,
   };
+
+  /// The auto-redirect target while a signed-in user has no care circle yet.
+  /// Only this one screen is "onboarding only" — a user who already has a
+  /// circle reaching it is sent home. [addPatient] and [joinPatient] stay
+  /// reachable at any time (e.g. from a "+" on the patients list), since
+  /// adding a second patient or accepting a second invite is an ordinary
+  /// action, not first-time setup.
+  static const Set<String> careCircleOnboardingOnly = {careCircleStart};
 
   /// Whether [location] is reachable while signed out.
   static bool isPublic(String location) => public.contains(pathOf(location));

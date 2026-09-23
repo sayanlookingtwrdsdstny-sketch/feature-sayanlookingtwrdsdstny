@@ -1,11 +1,16 @@
 rules_version = '2';
 
-// Module 02 scope only: the `users/{uid}` profile document created at
-// registration / profile completion (see
-// features/auth/data/firestore_profile_repository.dart). Every later
-// collection (patients, prescriptions, dose_logs, ...) is deny-by-default
-// until its owning module defines narrow rules for it — see
-// docs/ARCHITECTURE.md §10.
+// Module 02 added users/{uid}. Module 03 adds patients, guardian_relationships
+// and patient_link_codes (ARCHITECTURE §4, §6). Every later collection
+// (prescriptions, medications, dose_logs, ...) stays deny-by-default until
+// its owning module defines narrow rules for it — see docs/ARCHITECTURE.md
+// §10.
+//
+// No Cloud Function exists yet (Module 03 deliberately stays on the Spark
+// plan — see docs/NURIVA_MODULE_STATUS.md and ARCHITECTURE §18). Link-code
+// redemption is a client-side Firestore transaction instead, so these rules
+// are the ONLY server-side enforcement for it — there is no Function
+// double-checking behind them.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{uid} {
@@ -30,14 +35,245 @@ service cloud.firestore {
                          ['uid', 'displayName', 'email', 'roles', 'consent', 'createdAt', 'updatedAt']
                        );
 
-      // No profile editing yet — Module 03+ adds narrow update rules
+      // No profile editing yet — a later module adds narrow update rules
       // (e.g. displayName only, updatedAt re-stamped) when a screen needs it.
       allow update, delete: if false;
     }
 
-    // Everything else (patients, prescriptions, dose_logs, ...) belongs to
-    // later modules. Explicitly closed rather than left to the project
-    // default, so this file is the single source of truth.
+    // A caller's own relationship to `patientId` — the deterministic ID
+    // (ARCHITECTURE §6) that turns "is this user an active/primary guardian
+    // of that patient?" into one cheap get() instead of a query. Firestore
+    // caches repeated get()/exists() calls to the same path within one rule
+    // evaluation, so exists() + get() on the same relationship costs one
+    // document read, not two.
+    function callerRelationshipPath(patientId) {
+      return /databases/$(database)/documents/guardian_relationships/$(patientId + '__' + request.auth.uid);
+    }
+    function isActiveGuardianOf(patientId) {
+      return exists(callerRelationshipPath(patientId))
+             && get(callerRelationshipPath(patientId)).data.status == 'ACTIVE';
+    }
+    function isActivePrimaryOf(patientId) {
+      return isActiveGuardianOf(patientId)
+             && get(callerRelationshipPath(patientId)).data.isPrimary == true;
+    }
+
+    match /patients/{patientId} {
+      allow read: if request.auth != null
+                  && (patientId == request.auth.uid || isActiveGuardianOf(patientId));
+
+      // Self-patient: patients/{uid}, created once by the user themselves.
+      // Matches FirestorePatientRepository.ensureSelfPatient exactly.
+      allow create: if request.auth != null
+                    && patientId == request.auth.uid
+                    && request.resource.data.linkedUserUid == request.auth.uid
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && request.resource.data.guardianUids == []
+                    && request.resource.data.displayName is string
+                    && request.resource.data.timezone is string
+                    && request.resource.data.archived == false
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time;
+
+      // Guardian-managed patient: the creator names only themselves as
+      // creator/guardian. The matching guardian_relationships/{patientId}__
+      // {uid} write (same batch, below) is what actually grants ongoing
+      // access — this document alone grants nothing.
+      allow create: if request.auth != null
+                    && patientId != request.auth.uid
+                    && request.resource.data.linkedUserUid == null
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && request.resource.data.guardianUids == [request.auth.uid]
+                    && request.resource.data.displayName is string
+                    && request.resource.data.displayName.size() > 0
+                    && request.resource.data.dob is timestamp
+                    && request.resource.data.sex is string
+                    && request.resource.data.timezone is string
+                    && request.resource.data.archived == false
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time;
+
+      // No client update/delete yet — archiving and guardianUids maintenance
+      // land with whichever module first needs them.
+      allow update, delete: if false;
+    }
+
+    match /guardian_relationships/{relationshipId} {
+      // A guardian reads their own relationship doc (get, or the
+      // `where('guardianUid', ...)` list FirestorePatientRepository runs to
+      // find everyone they guard); a patient's active primary guardian reads
+      // every relationship on that patient (to see pending invites and
+      // manage the circle).
+      //
+      // The first branch deliberately checks the `guardianUid` FIELD, not
+      // just the deterministic `{patientId}__{guardianUid}` ID (though the
+      // two always agree — enforced by the create rule below). For a `list`
+      // request, Firestore only allows a query if the rule is provably true
+      // from the query's own `where` filters, evaluated once, not replayed
+      // per matched document — it does not run the query and check documents
+      // it returns. `watchGuardianPatients` queries
+      // `where('guardianUid', isEqualTo: uid)`, so a condition written
+      // against that same field is what Firestore can verify; a condition
+      // written only in terms of the document ID cannot be, and denies the
+      // entire list before it runs. `isActivePrimaryOf(resource.data.patientId)`
+      // survives the same test for `watchRelationshipsForPatient`, whose
+      // query filters `where('patientId', isEqualTo: patientId)` — the
+      // literal on that call is exactly what the rule's `get()` resolves
+      // against, so it evaluates once for the whole query rather than
+      // per-document too.
+      allow read: if request.auth != null
+                  && (resource.data.guardianUid == request.auth.uid
+                      || isActivePrimaryOf(resource.data.patientId));
+
+      // Created only two ways, both writing exactly their own uid as
+      // guardianUid, with the relationship ID matching {patientId}__
+      // {callerUid} — nobody can create a relationship naming a different
+      // guardian:
+      //
+      // 1. createManagedPatient's second write (ACTIVE, isPrimary) — the
+      //    patient doc is created first and awaited (NOT batched with this
+      //    write: get() below cannot see a sibling write from the same
+      //    batch/transaction, only already-committed state), so by the time
+      //    this rule evaluates, patients/{patientId}.createdByUid == caller
+      //    is real, already-committed proof the caller just created exactly
+      //    this patient — not a forged claim over someone else's.
+      // 2. redeemLinkCode's transaction (PENDING, not primary). A PENDING
+      //    relationship alone grants no read/write access to patient data
+      //    (see the patients/{patientId} read rule above, which requires
+      //    ACTIVE) — the primary guardian must still approve it — so this
+      //    branch intentionally does not re-verify the code itself here;
+      //    that is enforced by the app's transaction logic, and a forged
+      //    PENDING request without a real code is inert until approved.
+      allow create: if request.auth != null
+                    && request.resource.data.guardianUid == request.auth.uid
+                    && relationshipId == request.resource.data.patientId + '__' + request.auth.uid
+                    && request.resource.data.invitedAt == request.time
+                    && (
+                         (request.resource.data.status == 'ACTIVE'
+                           && request.resource.data.isPrimary == true
+                           && get(/databases/$(database)/documents/patients/$(request.resource.data.patientId))
+                                .data.createdByUid == request.auth.uid)
+                         ||
+                         (request.resource.data.status == 'PENDING'
+                           && request.resource.data.isPrimary == false)
+                       );
+
+      // Approve/reject: only the patient's active primary guardian, only a
+      // PENDING -> ACTIVE|REJECTED transition, only status + respondedAt.
+      allow update: if request.auth != null
+                    && isActivePrimaryOf(resource.data.patientId)
+                    && resource.data.status == 'PENDING'
+                    && request.resource.data.status in ['ACTIVE', 'REJECTED']
+                    && request.resource.data.respondedAt == request.time
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'respondedAt'])
+                  ||
+                    // Revoke: the primary guardian revoking someone else, or
+                    // a non-primary guardian revoking themselves ("leave").
+                    // The primary can never revoke their own relationship
+                    // this way — that would leave the patient with none.
+                    request.auth != null
+                    && resource.data.status == 'ACTIVE'
+                    && !resource.data.isPrimary
+                    && request.resource.data.status == 'REVOKED'
+                    && request.resource.data.revokedAt == request.time
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'revokedAt'])
+                    && (isActivePrimaryOf(resource.data.patientId)
+                        || resource.data.guardianUid == request.auth.uid);
+
+      allow delete: if false;
+    }
+
+    match /patient_link_codes/{code} {
+      // A code is a shared secret, not a listing: `get` (a known code, for
+      // display by its creator or redemption by an invitee) is allowed for
+      // any signed-in user, but `list` — which would let a client dump
+      // every code in the collection — is explicitly denied.
+      allow get: if request.auth != null;
+      allow list: if false;
+
+      allow create: if request.auth != null
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && isActiveGuardianOf(request.resource.data.patientId)
+                    && request.resource.data.consumedByUid == null
+                    && request.resource.data.consumedAt == null
+                    && request.resource.data.expiresAt is timestamp
+                    && request.resource.data.permissions is list
+                    && request.resource.data.permissions.size() > 0;
+
+      // Consumption only: redeemLinkCode's transaction sets consumedByUid /
+      // consumedAt on an unconsumed code, touching nothing else.
+      allow update: if request.auth != null
+                    && resource.data.consumedByUid == null
+                    && request.resource.data.consumedByUid == request.auth.uid
+                    && request.resource.data.consumedAt == request.time
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['consumedByUid', 'consumedAt']);
+
+      allow delete: if false;
+    }
+
+    // Module 04 adds prescriptions (ARCHITECTURE §4, §7 — deviated per §18:
+    // no Firebase Storage, since Storage requires the Blaze plan and the
+    // user has declined it. This document is metadata ONLY; page images are
+    // saved to the device's local filesystem and never reach Firestore, so
+    // there is nothing here to size-cap the way a Storage/base64 approach
+    // would need.
+    function isPatientSelf(patientId) {
+      return request.auth.uid == patientId;
+    }
+    function hasPermission(patientId, permission) {
+      return isActiveGuardianOf(patientId)
+             && get(callerRelationshipPath(patientId)).data.permissions
+                  .hasAny([permission]);
+    }
+    function canSeePrescriptionsOf(patientId) {
+      return isPatientSelf(patientId) || hasPermission(patientId, 'VIEW_PRESCRIPTIONS');
+    }
+
+    match /prescriptions/{prescriptionId} {
+      allow read: if request.auth != null
+                  && canSeePrescriptionsOf(resource.data.patientId);
+
+      // Matches PrescriptionService.uploadPrescription /
+      // FirestorePrescriptionRepository.createPrescription exactly: only
+      // someone who can see this patient's prescriptions, only themselves as
+      // uploader, only starting at UPLOADED, only server-assigned timestamps.
+      allow create: if request.auth != null
+                    && canSeePrescriptionsOf(request.resource.data.patientId)
+                    && request.resource.data.uploadedByUid == request.auth.uid
+                    && request.resource.data.status == 'UPLOADED'
+                    && request.resource.data.mimeType is string
+                    && request.resource.data.pageCount is int
+                    && request.resource.data.pageCount > 0
+                    && request.resource.data.pageCount <= 10
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time
+                    && request.resource.data.keys().hasOnly([
+                         'patientId', 'uploadedByUid', 'mimeType', 'pageCount',
+                         'prescribedDate', 'doctorName', 'clinicName', 'status',
+                         'createdAt', 'updatedAt'
+                       ]);
+
+      // No edits after upload yet — Module 05 owns the status transitions
+      // that follow AI/OCR extraction.
+      allow update: if false;
+
+      // Only while UPLOADED — nothing to undo once extraction has looked at
+      // it. The uploader or the patient's primary guardian may delete;
+      // deleting only ever removes this record, never another device's
+      // local image files (PrescriptionService.deletePrescription only
+      // reaches this device's own local store).
+      allow delete: if request.auth != null
+                    && resource.data.status == 'UPLOADED'
+                    && (resource.data.uploadedByUid == request.auth.uid
+                        || isActivePrimaryOf(resource.data.patientId));
+    }
+
+    // Everything else (medications, dose_logs, ...) belongs to later
+    // modules. Explicitly closed rather than left to the project default, so
+    // this file is the single source of truth.
     match /{document=**} {
       allow read, write: if false;
     }

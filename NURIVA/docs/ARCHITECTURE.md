@@ -973,5 +973,43 @@ Firestore's undocumented-by-us default, so the rules file — not tribal
 knowledge — is the single source of truth as more modules add their own
 narrow allows.
 
+### Module 04 (v0.4.0, 2026-09-20)
+
+**1. No Firebase Storage — prescription images are saved to the device's
+local filesystem instead.** §7 and §10 describe
+`prescriptions/{patientId}/{prescriptionId}/original.jpg` in Firebase
+Storage, served via the SDK. Module 02's §18 entry flagged that Storage
+needs the Blaze plan and that Module 04 was where this would become a real
+constraint; the user has now explicitly declined Blaze — no billing
+account, ever. `prescriptions/{id}` in Firestore is metadata only
+(patient, uploader, page count, status, timestamps); the page images
+themselves are written to `<appDocumentsDir>/prescriptions/<patientId>/
+<prescriptionId>/page_<n>.jpg` via `path_provider`, and Firestore never
+sees the bytes.
+
+The real cost: **an uploaded image is visible only on the device that
+uploaded it.** It does not sync to another guardian's phone and does not
+survive a reinstall. The Firestore metadata record *does* sync — every
+guardian with `VIEW_PRESCRIPTIONS` sees the same prescription list, dates
+and status — only the pixels are device-local. The detail screen shows an
+explicit "not available on this device" state rather than an error or a
+blank space when a page isn't here.
+
+**2. PDF prescriptions (`file_picker`, §14) deferred.** There is no PDF
+page-rendering library in the project to split a multi-page PDF into the
+per-page image files the local-storage layout above assumes, and adding one
+is a bigger decision than this module needs. Camera and gallery photos
+(1-10 pages per prescription) cover the real use case; PDF support is
+deferred to whichever future module first needs it.
+
+**3. Open question this creates for Module 05 (AI/OCR), not resolved here.**
+§7's Cloud Function reads the image from Storage. Cloud Functions also
+require the Blaze plan — the same wall Storage hit — so with no Storage
+*and* no Function, Module 05 needs its own resolution for how a
+server-side extraction step (if it remains server-side at all) gets a
+prescription's image bytes with no server-accessible copy of them
+anywhere. Flagged here so it is a Module 05 planning question, not a
+mid-module surprise.
+
 **Module detail — screens, files, tests, build info — lives in
 `NURIVA_MODULE_STATUS.md`, not here.** This document stays architectural.

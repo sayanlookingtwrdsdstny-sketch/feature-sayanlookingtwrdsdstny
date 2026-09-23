@@ -2,7 +2,7 @@
 
 > **New session? Read this file first, then `docs/ARCHITECTURE.md`.**
 > Do not start development automatically. Wait for an explicit `START MODULE X`.
-> Last updated: 2026-09-17
+> Last updated: 2026-09-23
 
 ---
 
@@ -10,14 +10,15 @@
 
 | | |
 |---|---|
-| **Current Module** | 02 — Authentication |
-| **Module Status** | ✅ Complete |
-| **Current Version** | `0.2.0` |
-| **Build Number** | `2` (`version: 0.2.0+2`) |
-| **Next Module** | 03 — Patient & Guardian |
-| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 03` |
+| **Current Module** | 04 — Prescription Upload |
+| **Module Status** | ✅ Complete — build succeeded, live-device functional test passed |
+| **Current Version** | `0.4.0` (`version: 0.4.0+4`) |
+| **Next Module** | 05 — AI/OCR |
+| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 05`. Open planning question: Cloud Functions also require Blaze (same wall Storage hit), and Module 04 saves prescription images locally, not to Storage — so Module 05 needs its own answer for how a server-side extraction step gets the image bytes. See ARCHITECTURE.md §18's Module 04 entry. |
 
-Firebase project `nuriva-27e59` is live: Firestore + Storage in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed. **Storage stays on the Spark (free) plan by the user's choice** — see "Known issues / limitations" below; this has no effect on Module 02 and only matters starting Module 04.
+**Module 04's build succeeded on 2026-09-23** once free RAM was above ~0.7 GB (the prior three attempts had failed at ~0.2-0.3 GB free — see environment gotcha #6). `flutter build apk --debug` completed in 142.7s, artifact verified (`com.nuriva.app`, `versionName 0.4.0`, `versionCode 4`, `targetSdk 36`) and copied to `NURIVA/builds/NURIVA_Module_04_v0.4.0_debug.apk`. Live-device functional testing then passed against the real `nuriva-27e59` backend — see Module 04's section below for the one real defect found and fixed along the way (rules deployment, same class of issue as Module 03).
+
+Firebase project `nuriva-27e59` is live: Firestore in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed (covering `users`, `patients`, `guardian_relationships`, `patient_link_codes`, `prescriptions`). **The project stays on the Spark (free) plan by the user's explicit, permanent choice — no Blaze, ever.** Firebase Storage is consequently unused: Module 04 saves prescription images to the device's local filesystem instead (see Module 04 below and ARCHITECTURE.md §18).
 
 ---
 
@@ -262,15 +263,288 @@ Because of defect 2, the real Firebase project now has one live user (`sayanlook
 
 ### Known issues / limitations
 
-1. **Storage stays on the Spark (free) plan by explicit user choice.** Module 02 needs no Storage access, so this has zero effect now. It becomes relevant at **Module 04** (prescription image upload), which needs the Blaze plan (Google requires it for any Storage bucket created after late 2024). Revisit then — Blaze still has a real free tier; it requires linking a billing account, not a subscription charge.
+1. **Storage stays on the Spark (free) plan by explicit user choice.** Module 02 needs no Storage access, so this had zero effect at the time. **Resolved at Module 04, permanently, the other direction**: the user declined Blaze outright rather than revisiting it, so Module 04 saves prescription images to the device's local filesystem instead of Storage — see Module 04 below and ARCHITECTURE.md §18.
 2. **App Check is deferred to Module 17**, not wired now. ARCHITECTURE.md §5 calls for it alongside Firebase Auth, but wiring it without the Firestore/Storage rules and attestation config that go with it would be security theatre rather than real hardening — Module 17 owns all of that together.
 3. Sign-out was verified manually on-device rather than via ADB automation — synthetic `input tap` events did not reliably trigger the `IconButton`'s response (likely a splash/hit-test timing issue with instant synthetic taps), and repeated attempts were abandoned in favor of the user confirming manually. Not a product defect.
 
 ### Deferred features
 
 - App Check → Module 17
-- Storage rules beyond deny-all → Module 04 (needs Blaze plan first)
+- Storage rules beyond deny-all → **superseded**: Firebase Storage is not used at all now (Module 04 uses local device storage instead — see below)
 - Profile editing (`update` on `users/{uid}`) → whichever module first needs it; `firestore.rules` currently denies all updates
+
+---
+
+## Module 03 — Patient & Guardian (v0.3.0) ✅
+
+### Completed features
+
+- Self-patient records (`patients/{uid}`, created silently for any signed-in user with the `patient` role, idempotent) and guardian-managed patients (`patients/{autoId}`, created explicitly via "Add a patient")
+- Guardian relationships (`guardian_relationships/{patientId}__{guardianUid}`) with a primary guardian per patient, `ACTIVE`/`PENDING`/`REJECTED`/`REVOKED` status, and a narrow, non-default `GuardianPermission` set (`viewMedications`, `manageMedications`, `viewAdherence`, `manageAppointments`, `viewPrescriptions`) — invite defaults are `{viewMedications, viewAdherence}` only; **`manageMedications` (the permission that can activate a live dosing schedule) is never granted by default**, matching this repo's healthcare-safety rule
+- Link-code invites (`patient_link_codes/{code}`): a primary guardian generates a 6-character code scoped to chosen permissions, 24h expiry, single-use; redemption is a client-side Firestore transaction (not a Cloud Function — Module 03 deliberately stays on the Spark plan, see ARCHITECTURE §18) that atomically consumes the code and creates a `PENDING` relationship
+- Approve / reject / revoke a relationship, all guarded by `firestore.rules`, not just client logic
+- `CareCircleRouteGuard` — a signed-in user with no patient in their care circle (no self-record, guards no one) is routed to `/care-circle/start` until they add or join one; `addPatient`/`joinPatient` stay reachable at any time afterward
+- Home screen now links to the Patients feature and reports Modules 01–03 as built
+
+### Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Care circle start | `/care-circle/start` | Onboarding-only redirect target for a signed-in user with an empty care circle |
+| Add a patient | `/care-circle/add-patient`, also `/family` → "+" | Creates a guardian-managed patient; creator becomes primary guardian |
+| Join with a code | `/care-circle/join` | Redeems a link code into a `PENDING` relationship |
+| Patients list | `/family` | Self-record (if any) plus every patient guarded via an `ACTIVE` relationship |
+| Patient detail | `/family/:patientId` | Patient info, guardian list with permissions, invite-a-guardian sheet, generated code |
+
+### Files created
+
+```
+lib/core/constants/timezones.dart
+lib/features/patients/domain/      patient_models · patient_repositories · link_code_generator
+lib/features/patients/data/        firestore_patient_repository · firestore_guardian_relationship_repository
+lib/features/patients/application/ patient_providers · care_circle_service · care_circle_route_guard
+lib/features/patients/presentation/ care_circle_start_screen · add_patient_screen · join_patient_screen
+                                     patients_list_screen · patient_detail_screen · patient_copy
+                                     widgets/invite_guardian_sheet
+test/features/patients/            (domain + application unit tests)
+test/support/fake_patients.dart
+```
+
+### Files modified
+
+- `pubspec.yaml`, `app_version.dart` — version `0.2.0+2` → `0.3.0+3`
+- `firestore.rules` — added `patients`, `guardian_relationships`, `patient_link_codes` (see "Two real defects" below for the fix history within this module)
+- `app_router.dart`, `app_routes.dart` — patients routes + `CareCircleRouteGuard` wiring, `hasCareCircleProvider` drives router refresh alongside `sessionProvider`
+- `firestore_paths.dart` — `patientLinkCode(code)` helper
+- `home_screen.dart` — Patients entry point, "what is built" and "next module" copy updated
+
+### Dependencies
+
+No new packages. `NurivaTimezones` (`core/constants/timezones.dart`) is a hand-written IANA zone list, not a plugin — deliberately avoids a `timezone`-package dependency for a Module 03-sized need.
+
+### Database changes
+
+Three new live collections in `nuriva-27e59`:
+```
+patients/{patientId}              — self (id == uid) or guardian-managed (auto id)
+guardian_relationships/{patientId}__{guardianUid} — deterministic id, one per (patient, guardian) pair
+patient_link_codes/{code}         — 6-char code, 24h expiry, single-use
+```
+`firestore.rules` denies everything else explicitly, as in Module 02.
+
+### Testing completed
+
+**224 tests passing** (up from 191 in Module 02), `flutter analyze` clean. Domain, application/service, route-guard, and link-code-generator layers are unit-tested; the Firestore repositories and the 6 presentation screens are not — coverage gap accepted for this module, same trade Module 02 made, closed instead by live-device testing below.
+
+Basic functional testing per §5 — no advanced testing performed.
+
+#### Live-device verification (2026-09-17, physical phone via ADB, real `nuriva-27e59` backend)
+
+Confirmed against the real project, not fakes: patient creation (self and guardian-managed), guarded-patients list loading, invite-guardian sheet's default permission set (`viewMedications` + `viewAdherence` only, `manageMedications` unchecked — matches the domain default and the healthcare-safety rule), link-code generation, timezone auto-detection to `Asia/Kolkata`.
+
+#### Two real defects the live-device run caught
+
+1. **`firestore.rules` was never deployed.** The Module 03 rules existed only in the repo (`git status` showed it modified, uncommitted, and — separately — never pushed to the live project via `firebase deploy`). Every Module 03 query failed `PERMISSION_DENIED` until `firebase deploy --only firestore:rules --project nuriva-27e59` was run. Not a code bug, but worth a permanent note: **finishing a module's rules file is not the same as deploying it** — this session had no record that Module 02's own rules deploy had been a manual, easy-to-forget step either.
+2. **A genuine rules bug, found only after (1) was fixed.** `watchGuardianPatients` queries `guardian_relationships where guardianUid==<uid> and status==ACTIVE` — a `list`, not a `get`. Cloud Firestore only allows a `list`/query request when the security rule can be proven true **directly from the query's own `where` filters**, evaluated once against the query as declared — it does not run the query first and check the rule per returned document. The original rule granted access via `relationshipId == resource.data.patientId + '__' + request.auth.uid` (a document-ID string match) with no clause referencing the `guardianUid` *field* the query actually filters on, so Firestore could not prove the rule held for the query and denied it outright — for any data, not merely when nothing matched. (This also explains, in hindsight, why `watchRelationshipsForPatient`'s query — filtered by `patientId`, matching the rule's `isActivePrimaryOf(resource.data.patientId)` branch on that same field — worked the whole time.) **Fixed** by adding `resource.data.guardianUid == request.auth.uid` as a directly provable OR-branch in `firestore.rules`, redeployed. General lesson for every future rule on a field a client will `.where()` by: the rule must reference that literal field, not just something structurally equivalent to it (like the document ID), or Firestore cannot verify the query is safe and refuses it unconditionally.
+
+#### One more defect, found while fixing the above
+
+**`patients_list_screen.dart` showed "Could not load your patients. Pull to retry." with no way to actually retry.** The `ListView` was never wrapped in a `RefreshIndicator`, and nothing called `ref.invalidate(...)` anywhere in the patients feature. `selfPatientProvider`/`guardianPatientsProvider` are plain (non-`autoDispose`) `StreamProvider`s, so once the underlying Firestore listen errors — as it did during defect (1) above — the provider keeps serving that terminal `AsyncError` forever; merely leaving and re-entering the route does not create a fresh subscription. A real user who ever hit a transient read failure here (a network blip, not just the rules bug above) would have been stuck until an app restart. **Fixed** by wrapping the list in a `RefreshIndicator` whose `onRefresh` invalidates both providers.
+
+### Known issues / limitations
+
+1. **Firestore repositories and presentation screens have no automated tests** (unit/widget) — only domain/application layers do. Live-device testing covered the gap for this module; a future module should consider adding at least fake-repository-backed widget tests for the patients screens before the surface area grows further.
+2. **Two incidental test patients exist in the live `nuriva-27e59` project** — "Sucharita Sarkar" and "Archana Chakrabor" — created when Android's autofill substituted real contact names/DOBs into the "Add a patient" form during ADB-driven testing (the same class of issue Module 02 documented with the registration form). Harmless dev-project data; left in place. Deletable in one click via Firestore console → `patients` collection (and the matching `guardian_relationships` docs) if wanted.
+3. `watchGuardianPatients` re-fetches every guarded patient by ID whenever the caller's relationship set changes, rather than getting live per-patient updates — an accepted MVP trade documented inline in `firestore_patient_repository.dart`, fine for a care circle of a handful of patients.
+
+### Deferred features
+
+- Archiving a patient, editing `guardianUids` → whichever module first needs them; `firestore.rules` currently denies all `patients` updates
+- Cloud Function-based link-code redemption → only if the Spark-plan constraint is lifted; the current client-transaction approach is deliberate (ARCHITECTURE §18), not a placeholder
+
+---
+
+## Module 04 — Prescription Upload (v0.4.0) ✅
+
+**Build status:** succeeded 2026-09-23 once free RAM cleared ~0.7 GB (three
+earlier attempts had failed at ~0.2-0.3 GB free — see environment gotcha
+#6). `flutter build apk --debug` completed in 142.7s. Artifact identity
+verified with `aapt dump badging`: `com.nuriva.app`, `versionName 0.4.0`,
+`versionCode 4`, `targetSdk 36`, label `NURIVA`.
+
+### Completed features
+
+- Camera/gallery capture of a prescription (1-10 pages), compressed
+  client-side (`flutter_image_compress`, long edge 1600px, quality 80) before
+  saving
+- **No Firebase Storage.** The user declined the Blaze plan permanently
+  (see "CURRENT STATE" above and ARCHITECTURE.md §18's Module 04 entry).
+  Page images are saved to the device's local filesystem instead
+  (`path_provider`, deterministic layout
+  `<appDocumentsDir>/prescriptions/<patientId>/<prescriptionId>/page_<n>.jpg`);
+  `prescriptions/{id}` in Firestore holds metadata only and never sees an
+  image byte
+- `firestore.rules` — `prescriptions` added: read/create/delete gated on
+  `isPatientSelf` or the `VIEW_PRESCRIPTIONS` guardian permission (the only
+  prescription-related permission Module 03 defined — there is no separate
+  "upload" permission); `create` whitelists fields and caps `pageCount` at
+  1-10; `update` is fully closed (Module 05 owns status transitions);
+  `delete` only while `status == UPLOADED`
+- A picker screen ("Prescriptions" from Home) that skips straight to a
+  patient's list when there's exactly one viewable patient, and otherwise
+  lets the user choose among the self-patient plus every guarded patient
+  whose relationship carries `VIEW_PRESCRIPTIONS`
+- Upload rollback: if saving pages locally fails after the Firestore record
+  is created, `PrescriptionService` deletes that record again rather than
+  leaving an `UPLOADED` prescription with no image anywhere
+- Delete: removes the Firestore record and this device's local files;
+  deleting from a device that never had the files removes only the record
+  (documented limitation, not a bug — see below)
+
+### Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Prescription patient picker | `/prescriptions` | Auto-redirects when there's exactly one viewable patient |
+| Prescriptions list | `/prescriptions/:patientId` | Pull-to-refresh; FAB opens the add-prescription sheet |
+| Prescription detail | `/prescriptions/:patientId/:prescriptionId` | Pages (or a "not on this device" explanation per page), delete while `UPLOADED` |
+| Add-prescription sheet | (modal, from the list screen) | Camera/Gallery buttons, thumbnail strip with per-page remove, "Upload N pages" |
+
+### Files created
+
+```
+lib/features/prescriptions/domain/       prescription_models · prescription_repositories
+                                          local_image_store · image_capture_service
+lib/features/prescriptions/data/         firestore_prescription_repository
+                                          local_prescription_image_store · device_image_capture_service
+lib/features/prescriptions/application/  prescription_providers · prescription_service
+lib/features/prescriptions/presentation/ prescription_patient_picker_screen · prescriptions_list_screen
+                                          prescription_detail_screen · prescription_copy
+                                          widgets/add_prescription_sheet
+test/features/prescriptions/             (domain + application unit tests)
+test/support/fake_prescriptions.dart
+```
+
+### Files modified
+
+- `pubspec.yaml`, `app_version.dart` — version `0.3.0+3` → `0.4.0+4`; added
+  `image_picker`, `flutter_image_compress`, `path_provider`
+- `firestore.rules` — added `prescriptions` (metadata-only; see above);
+  factored a new `isPatientSelf(patientId)` helper (patients rules keep
+  their existing inline check untouched, to avoid touching a live-verified
+  file for a module that doesn't need to)
+- `firestore_paths.dart` — removed the unused `prescriptionStorage(...)`
+  helper (dead code pointing at a Firebase Storage path this module
+  deliberately doesn't use); the corresponding test group in
+  `firestore_paths_test.dart` was removed too
+- `app_routes.dart`, `app_router.dart` — `prescriptionsFor(patientId)`,
+  `prescriptionDetail`/`prescriptionDetailFor(...)` + the three routes above
+- `home_screen.dart` — "Prescriptions" entry point added; Module 04 moved
+  from "Next" into "What is built"; "Next" now names Module 05
+- `android/app/src/main/AndroidManifest.xml` — `CAMERA` permission +
+  optional `android.hardware.camera` feature, for `image_picker`'s camera
+  source
+
+### Dependencies
+
+**Added:** `image_picker` (camera/gallery capture), `flutter_image_compress`
+(client-side compression before saving), `path_provider` (locates the app's
+local documents directory for image storage).
+
+**Not added:** `file_picker` — PDF support is deferred (see "Known issues"
+below); `firebase_storage` — deliberately not used at all (this module's
+core deviation, see ARCHITECTURE.md §18).
+
+### Database changes
+
+One new live collection in `nuriva-27e59`, metadata only:
+```
+prescriptions/{prescriptionId}
+  patientId, uploadedByUid, mimeType, pageCount (1..10)
+  prescribedDate | null, doctorName | null, clinicName | null
+  status: 'UPLOADED'          <- only status this module ever writes
+  createdAt, updatedAt
+```
+No image bytes reach Firestore. `firestore.rules` denies everything else
+explicitly, as in Modules 02-03.
+
+### Testing completed
+
+**229 tests passing** (up from 224 in Module 03 — 8 new, minus 3 removed
+along with the dead `prescriptionStorage` helper), `flutter analyze` clean.
+
+Domain (`prescription_models_test.dart`) and application
+(`prescription_service_test.dart`, against `FakePrescriptionRepository` +
+an in-memory `FakeLocalImageStore` so no platform channel is touched) layers
+are unit-tested — validation of the page-count bounds, the create-then-save
+ordering, and the rollback-on-local-failure path.
+
+Basic functional testing per §5 — no advanced testing performed.
+
+Following the same trade Modules 02-03 made: the Firestore repository, the
+real `LocalPrescriptionImageStore` (actual disk I/O), and the four
+presentation screens are **not** covered by automated widget/repository
+tests — live-device testing below covered the gap for this module.
+
+#### Live-device verification (2026-09-23, physical phone via ADB, real `nuriva-27e59` backend)
+
+Confirmed against the real project, not fakes: prescriptions patient picker
+(auto-redirect for a single viewable patient, picker list for multiple —
+both of Module 03's incidental test patients showed correctly), empty
+state, add-prescription sheet, gallery-picked image compressed and saved
+locally at the documented deterministic path
+(`app_flutter/prescriptions/<patientId>/<prescriptionId>/page_0.jpg`,
+confirmed via `run-as` on-device), Firestore metadata record created and
+reflected live in the list as "Uploaded", detail screen rendering the saved
+image, delete (confirm dialog, dismiss = no) removing both the Firestore
+record and the local file.
+
+#### One real defect the live-device run caught
+
+**`firestore.rules`'s `prescriptions` block was never deployed to the live
+project** — the exact same class of issue Module 03 documented ("finishing
+a module's rules file is not the same as deploying it"). The block existed
+in the repo (uncommitted, like the rest of Module 04's code) but the live
+project was still running only Module 03's rules, so every prescription
+create was denied with `PERMISSION_DENIED`. Firestore's local offline
+mutation queue had also silently queued a couple of earlier failed create
+attempts (from manual testing before this verification pass) and kept
+retrying them on every app launch, which is what first surfaced the error
+in logcat before any deliberate test action was taken. **Fixed** by running
+`firebase deploy --only firestore:rules --project nuriva-27e59`; confirmed
+clean by uninstalling and reinstalling the app (flushing the stale offline
+queue and local cache) and redoing the upload from a clean state, which
+then succeeded with no Firestore errors in logcat.
+
+### Known issues / limitations
+
+1. **A prescription's image is visible only on the device that uploaded
+   it.** This is the module's central, accepted trade-off for staying free
+   — see ARCHITECTURE.md §18's Module 04 entry for the full reasoning. The
+   Firestore metadata record syncs normally; the pixels do not. The detail
+   screen shows an explicit "not on this device" state per page rather than
+   an error.
+2. **No PDF support.** `file_picker`/PDF prescriptions (ARCHITECTURE.md
+   §14) are deferred — there's no PDF page-rendering library in the project
+   to split a PDF into the per-page image files this module's local-storage
+   layout assumes. Camera + gallery photos cover the real use case.
+3. **Deleting from a device that never had the local files removes only the
+   Firestore record.** `PrescriptionService.deletePrescription` only ever
+   reaches *this* device's own local store — there is no server-side copy
+   to clean up elsewhere. Expected given limitation 1, not a separate bug.
+4. **Module 05 (AI/OCR) has an open question this module creates**: Cloud
+   Functions also require Blaze, and there is now no server-accessible copy
+   of a prescription's image (no Storage, no Firestore copy) for a Function
+   to read. Not resolved here — flagged as a Module 05 planning question in
+   ARCHITECTURE.md §18.
+
+### Deferred features
+
+- PDF prescriptions → whichever future module first needs them
+- Editing a prescription after upload (`update` on `prescriptions/{id}`) →
+  Module 05 owns the status transitions that follow extraction
+- Any server-side access to prescription images at all → Module 05, see
+  "Known issues" #4 above
 
 ---
 
@@ -279,11 +553,12 @@ Because of defect 2, the real Firebase project now has one live user (`sayanlook
 | | |
 |---|---|
 | Command | `flutter build apk --debug` |
-| Artifact | `NURIVA_Module_02_v0.2.0_debug.apk` (Module 01's `NURIVA_Module_01_v0.1.0_debug.apk` still present alongside it) |
+| Artifact | `NURIVA_Module_04_v0.4.0_debug.apk` (Modules 01-03's APKs still present alongside it) |
 | Location | `NURIVA/builds/` (gitignored — binaries are never committed) |
-| Size | ~169 MB — debug builds bundle every ABI plus debug symbols |
-| Verified identity | `package: com.nuriva.app`, `versionName 0.2.0`, `versionCode 2`, `application-label: NURIVA`, `targetSdk 36` |
+| Size | ~172.6 MB — debug builds bundle every ABI plus debug symbols |
+| Verified identity | `package: com.nuriva.app`, `versionName 0.4.0`, `versionCode 4`, `application-label: NURIVA`, `targetSdk 36` |
 | Signing | Debug keystore — sideload only, **not** Play-ready |
+| Build time | 142.7s, with ~0.7 GB free RAM at the time (see gotcha #6) |
 
 For sideloading, `flutter build apk --release` produces a much smaller artifact (still debug-signed), and `--split-per-abi` cuts it further.
 
@@ -305,6 +580,9 @@ For sideloading, `flutter build apk --release` produces a much smaller artifact 
 3. **The Android SDK lives at `D:\dev\android-sdk`, not in the user profile.** It was relocated because a flat-in-profile layout made the SDK manager walk the whole profile and crash on the `AppData\Local\Application Data` junction loop.
 4. **Do not pipe long-running Flutter/Gradle commands through PowerShell `Select-Object`** when you need progress — it buffers the whole stream and a working command looks like a hang.
 5. **Kotlin's incremental compiler can fail to close its own cache files on Windows.** First hit in Module 02, compiling `firebase_core` (the first plugin in this repo with real Kotlin source) — `compileDebugKotlin` failed with *"Could not close incremental caches ... class-fq-name-to-source.tab"*, reproduced identically after a full `flutter clean`. **Fix in `android/gradle.properties`:** `kotlin.compiler.execution.strategy=in-process` and `kotlin.incremental=false` (forces in-process compilation, avoiding the cross-process file handle that triggers it). Do not remove these lines — the failure is deterministic without them, not a one-off flake.
+6. **This machine has only 3.91 GB of RAM — check free memory before running `flutter build`.** First hit in Module 04, adding `flutter_image_compress`/`image_picker`/`path_provider` (native Android libraries; prior modules' dependencies were pure-Dart or thin Firebase wrappers). With several other applications already open, free RAM can sit at ~0.2-0.3 GB, and at that level the build fails — not in Gradle, but in the **Dart compiler itself** (`../../runtime/vm/zone.cc: 95: error: Out of memory.`), before Gradle or per-ABI packaging is even reached. Confirmed across three variants (`--debug` full multi-ABI, `--debug` single-ABI, `--release` single-ABI) — none help, because scoping the build doesn't change how much memory the Dart VM needs just to *start* compiling. There is no code-level fix: check free RAM first (PowerShell: `Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory`, divide KB by ~1e6 for GB), and if it's under ~1 GB, say so and ask before burning a build cycle that's going to fail anyway — don't keep retrying with different flags hoping one sticks. **Resolved in practice at ~0.7 GB free** (Module 04's actual successful build) — under 1 GB is a "flag it and ask", not an automatic "it will fail".
+7. **The test phone (Realme RMX3612, ColorOS) needs a real data cable and File Transfer/MTP mode, not just "USB debugging" toggled on.** First hit in Module 04's live-device pass: with USB debugging on and the phone unlocked, `adb devices` still showed nothing, and Windows Device Manager showed the phone enumerating in **MIDI mode** (`Get-PnpDevice | Where FriendlyName -match "RMX3612"`) rather than as a composite device with an ADB interface — a ColorOS quirk when the cable or the phone's own USB-mode notification hasn't been set to File Transfer. Separately, a **charge-only USB cable** produced literally zero Windows PnP/USB events on connect (verified via `Get-WinEvent -ProviderName Microsoft-Windows-Kernel-PnP`) — swapping to a real data cable fixed it immediately. If `adb devices` is empty: check the phone's USB-mode notification is set to File Transfer/MTP (not MIDI, not charging-only), and if that doesn't help, suspect the cable before suspecting drivers or ADB config.
+8. **`adb shell pm clear <package>` is blocked on this device with a `SecurityException` (missing `CLEAR_APP_USER_DATA`)** — a ColorOS ADB restriction, not fixable from the host side. To reset an app's local state for a clean-slate test, use `adb uninstall <package>` followed by `adb install <apk>` instead; this also flushes Firestore's local offline-mutation queue and any locally cached files, which `pm clear` would have done anyway.
 
 ---
 
@@ -314,8 +592,8 @@ For sideloading, `flutter build apk --release` produces a much smaller artifact 
 |---|---|---|---|
 | 01 | Foundation | v0.1.0 | ✅ Complete |
 | 02 | Authentication | v0.2.0 | ✅ Complete |
-| 03 | Patient & Guardian | v0.3.0 | ⬜ Waiting for `START MODULE 03` |
-| 04 | Prescription Upload | v0.4.0 | ⬜ Needs Blaze plan for Storage |
+| 03 | Patient & Guardian | v0.3.0 | ✅ Complete |
+| 04 | Prescription Upload | v0.4.0 | ✅ Complete |
 | 05 | AI/OCR | v0.5.0 | ⬜ Also needs AI provider choice |
 | 06 | Prescription Verification | v0.6.0 | ⬜ |
 | 07 | Guardian Approval | v0.7.0 | ⬜ Safety-critical |

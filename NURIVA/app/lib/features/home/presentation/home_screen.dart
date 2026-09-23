@@ -92,6 +92,20 @@ final class HomeScreen extends ConsumerWidget {
             const SizedBox(height: NurivaTokens.space6),
             _AccountCard(profile: profile),
             const SizedBox(height: NurivaTokens.space3),
+            NurivaButton(
+              label: 'Patients',
+              icon: Icons.family_restroom_outlined,
+              variant: NurivaButtonVariant.secondary,
+              onPressed: () => context.push(AppRoutes.family),
+            ),
+            const SizedBox(height: NurivaTokens.space3),
+            NurivaButton(
+              label: 'Prescriptions',
+              icon: Icons.description_outlined,
+              variant: NurivaButtonVariant.secondary,
+              onPressed: () => context.push(AppRoutes.prescriptions),
+            ),
+            const SizedBox(height: NurivaTokens.space3),
             NurivaCard(
               accent: context.statusColors.taken,
               child: Row(
@@ -125,12 +139,24 @@ final class HomeScreen extends ConsumerWidget {
             ),
             const NurivaSectionHeader(
               title: 'What is built',
-              subtitle: 'Modules 01 and 02',
+              subtitle: 'Modules 01–04',
             ),
             const _BuiltItem(
               icon: Icons.lock_person_outlined,
               title: 'Sign-in and accounts',
               subtitle: 'Registration, email confirmation, password reset',
+            ),
+            const _BuiltItem(
+              icon: Icons.family_restroom_outlined,
+              title: 'Patients & guardians',
+              subtitle: 'Add a patient, invite/approve/revoke guardians, '
+                  'link codes',
+            ),
+            const _BuiltItem(
+              icon: Icons.description_outlined,
+              title: 'Prescription upload',
+              subtitle: 'Camera/gallery capture, saved on-device — see the '
+                  "prescription's detail screen for why",
             ),
             const _BuiltItem(
               icon: Icons.palette_outlined,
@@ -151,7 +177,7 @@ final class HomeScreen extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          'Module 03 — Patient & Guardian',
+                          'Module 05 — AI/OCR',
                           style: context.text.titleMedium,
                         ),
                       ),
@@ -163,8 +189,7 @@ final class HomeScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: NurivaTokens.space2),
                   Text(
-                    'Add the people you care for, and link family members '
-                    'who help.',
+                    'Extract medication details from an uploaded prescription.',
                     style: context.text.bodyMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),

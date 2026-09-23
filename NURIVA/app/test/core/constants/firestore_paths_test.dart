@@ -163,55 +163,11 @@ void main() {
     });
   });
 
-  group('prescriptionStorage', () {
-    test('is patient-scoped so Storage Rules can authorize on the path', () {
-      expect(
-        FirestorePaths.prescriptionStorage(
-          patientId: 'p1',
-          prescriptionId: 'rx1',
-          fileName: 'original.jpg',
-        ),
-        'prescriptions/p1/rx1/original.jpg',
-      );
-    });
-
-    test('puts the patient id in the second segment', () {
-      final path = FirestorePaths.prescriptionStorage(
-        patientId: 'p1',
-        prescriptionId: 'rx1',
-        fileName: 'original.jpg',
-      );
-
-      expect(path.split('/')[1], 'p1');
-    });
-
-    test('rejects empty components', () {
-      expect(
-        () => FirestorePaths.prescriptionStorage(
-          patientId: '',
-          prescriptionId: 'rx1',
-          fileName: 'f.jpg',
-        ),
-        throwsArgumentError,
-      );
-      expect(
-        () => FirestorePaths.prescriptionStorage(
-          patientId: 'p1',
-          prescriptionId: '',
-          fileName: 'f.jpg',
-        ),
-        throwsArgumentError,
-      );
-      expect(
-        () => FirestorePaths.prescriptionStorage(
-          patientId: 'p1',
-          prescriptionId: 'rx1',
-          fileName: '  ',
-        ),
-        throwsArgumentError,
-      );
-    });
-  });
+  // `prescriptionStorage` was removed in Module 04: prescription images are
+  // saved to the device's local filesystem, not Firebase Storage (no Blaze
+  // plan — see docs/ARCHITECTURE.md §18's Module 04 entry). The local path
+  // layout lives in `LocalPrescriptionImageStore`, not here, since it isn't
+  // a Firestore concern.
 
   group('collection names', () {
     test('are snake_case and stable', () {
