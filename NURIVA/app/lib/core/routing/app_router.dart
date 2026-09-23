@@ -24,6 +24,7 @@ import 'package:nuriva/features/patients/presentation/join_patient_screen.dart';
 import 'package:nuriva/features/patients/presentation/patient_detail_screen.dart';
 import 'package:nuriva/features/patients/presentation/patients_list_screen.dart';
 import 'package:nuriva/features/prescriptions/presentation/prescription_detail_screen.dart';
+import 'package:nuriva/features/verification/presentation/verify_prescription_screen.dart';
 import 'package:nuriva/features/prescriptions/presentation/prescription_patient_picker_screen.dart';
 import 'package:nuriva/features/prescriptions/presentation/prescriptions_list_screen.dart';
 import 'package:nuriva/features/splash/presentation/splash_screen.dart';
@@ -142,6 +143,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: AppRoutes.prescriptionDetail,
         builder: (context, state) => PrescriptionDetailScreen(
+          patientId: state.pathParameters['patientId']!,
+          prescriptionId: state.pathParameters['prescriptionId']!,
+        ),
+      ),
+      GoRoute(
+        path: AppRoutes.prescriptionVerify,
+        builder: (context, state) => VerifyPrescriptionScreen(
           patientId: state.pathParameters['patientId']!,
           prescriptionId: state.pathParameters['prescriptionId']!,
         ),

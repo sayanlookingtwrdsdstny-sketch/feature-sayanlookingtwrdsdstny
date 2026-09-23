@@ -267,6 +267,9 @@ abstract final class PrescriptionTextParser {
     rest = rest
         .replaceAll(_duration, ' ')
         .replaceAll(RegExp(r'[|,;:]+'), ' ')
+        // Removing a strength from "Atarax (10 mg)" leaves "Atarax ( )".
+        // The brackets held the token that is now gone, so they go too.
+        .replaceAll(RegExp(r'\(\s*\)|\[\s*\]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
 

@@ -1065,5 +1065,50 @@ speculative. `OcrEngine` is the port that exists — narrow, and enough to
 swap the engine or add a remote one later without touching
 `ExtractionService`.
 
+### Module 06 (v0.6.0, 2026-09-23)
+
+**1. Medications are created by a person at verification, not by a Function
+at extraction.** §7 step 8 has the Cloud Function write
+`medications` as `PENDING_APPROVAL` before anyone looks at the screen, so
+step 10 is a guardian *checking* a machine's draft. There is no Function,
+and Module 05 deliberately created nothing — so Module 06 is where a
+medication first exists, typed by someone reading the page.
+
+This is a stronger arrangement than §7's, not a weaker one. The failure
+mode §7 spends four defences on is a confident, wrong draft that a tired
+guardian waves through. Here there is no draft to wave through: the fields
+start empty, and the only way a medicine exists is that a person read it
+off the paper. Automation bias has nothing to attach to.
+
+**2. The screen is built around the raw text, not the extracted fields.**
+§7 specifies "original image side-by-side with extracted fields". On a
+phone side-by-side means stacked, and Module 05's live-device finding
+changes what deserves the space: on a tabular prescription the candidates
+carry only names and forms, because the frequency cell arrives detached
+from the medicine it belongs to. So the photo and the verbatim recognized
+text are the working surface, expanded by default, and candidates appear
+below as shortcuts that pre-fill the form. **The form never pre-fills a
+dose time or frequency from OCR** — on this layout that value would be a
+guess wearing the costume of a default.
+
+**3. `medications` update is `if false`, and Module 07 has a decision to
+make.** §10's posture is that no client can bring a dosing schedule into
+existence — `dose_logs` create is `if false` because only a Function was
+ever meant to write one. Module 06 keeps the equivalent guarantee for
+medications: a client may create only `PENDING_APPROVAL`, and may not
+change a medication at all.
+
+That leaves Module 07 (Guardian Approval) facing the same wall Module 05
+hit, in a more sensitive place: **with no Cloud Function, something
+client-side must write `ACTIVE`, and that is a real weakening of §10 rather
+than a detail to route around.** Flagged here so it is a Module 07 planning
+decision, taken deliberately, rather than a rule quietly relaxed
+mid-implementation.
+
+**4. `prescriptions.activeExtractionId` (§4) is still unused.** Module 05
+made extractions append-only and Module 06 reads the newest, so no pointer
+is needed yet. Whichever module first needs to pin a specific extraction as
+canonical should add it then.
+
 **Module detail — screens, files, tests, build info — lives in
 `NURIVA_MODULE_STATUS.md`, not here.** This document stays architectural.

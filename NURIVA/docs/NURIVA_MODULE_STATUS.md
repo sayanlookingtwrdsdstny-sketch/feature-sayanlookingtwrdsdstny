@@ -10,15 +10,39 @@
 
 | | |
 |---|---|
-| **Current Module** | 05 — Prescription Reading (on-device OCR) |
+| **Current Module** | 06 — Prescription Verification |
 | **Module Status** | ✅ Complete — build succeeded, live-device test passed against a real prescription |
-| **Current Version** | `0.5.0` (`version: 0.5.0+5`) |
-| **Next Module** | 06 — Prescription Verification |
-| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 06`. **Read Module 05's "Known issues" #1 before planning it**: on a tabular prescription the raw recognized text, not the candidate cards, is what a verifier can actually work from, so Module 06's screen should be built around the raw text beside the photo. |
+| **Current Version** | `0.6.0` (`version: 0.6.0+6`) |
+| **Next Module** | 07 — Guardian Approval (safety-critical) |
+| **Next Module Status** | ⬜ Not started — waiting for explicit `START MODULE 07`. **It opens with a decision, not with code** — see the blocker below. |
 
-**Module 05 replaced §7's AI step with on-device OCR — the user's explicit decision (2026-09-23): no paid AI API, no key, no backend.** §7's Cloud Function + Storage + Secret Manager design was unreachable (all Blaze-only) and §10 forbids putting an AI key in the Flutter binary, so extraction now runs Google ML Kit's bundled Latin model locally. No prescription image or text leaves the phone. The safety architecture is intact: extraction creates no medication and activates nothing, and §7's real backstop — the human approval gate — is untouched. Full reasoning in ARCHITECTURE.md §18's Module 05 entry.
+### ▲ Module 07 has an open architectural decision
 
-Firebase project `nuriva-27e59` is live: Firestore in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed (covering `users`, `patients`, `guardian_relationships`, `patient_link_codes`, `prescriptions` and `prescriptions/{id}/extractions`). **The project stays on the Spark (free) plan by the user's explicit, permanent choice — no Blaze, ever.** Firebase Storage is consequently unused: Module 04 saves prescription images to the device's local filesystem instead (see Module 04 below and ARCHITECTURE.md §18).
+§10's security posture is that **no client can bring a dosing schedule into
+existence** — `dose_logs` create is `if false` because only a Cloud Function
+was ever meant to write one. Module 06 preserved the equivalent guarantee
+for medications: `create` accepts only `PENDING_APPROVAL`, and `update` is
+`if false`.
+
+Module 07's whole job is to move a medication to `ACTIVE`. With no Cloud
+Functions (Blaze declined, permanently), **something client-side has to
+perform that write**, and no Firestore rule can distinguish "a guardian
+tapped approve in the real app" from "someone with the same credentials
+wrote the document directly". Rules can constrain the *shape* of the
+transition — who, from which state, with a matching `payloadHash` — but they
+cannot supply the trusted-server half §7 assumed.
+
+That is a genuine weakening of the design's security posture, in its most
+safety-critical place, and it needs a deliberate decision rather than a rule
+quietly relaxed mid-implementation. Options worth putting to the user, in
+the order they were useful at Module 05: a free-tier serverless endpoint
+holding a privileged key; accepting client-side activation with the
+tightest possible rule plus an audit trail; or narrowing the module. See
+ARCHITECTURE.md §18's Module 06 entry.
+
+**Module 05 replaced §7's AI step with on-device OCR — the user's explicit decision (2026-09-23): no paid AI API, no key, no backend.** §7's Cloud Function + Storage + Secret Manager design was unreachable (all Blaze-only) and §10 forbids putting an AI key in the Flutter binary, so extraction now runs Google ML Kit's bundled Latin model locally. No prescription image or text leaves the phone. Module 06 then made a person, not a model, the one who records a medicine — the fields start empty, so there is no confident-looking draft for a tired guardian to wave through. Full reasoning in ARCHITECTURE.md §18's Module 05 and 06 entries.
+
+Firebase project `nuriva-27e59` is live: Firestore in `asia-south1`, Email/Password auth enabled, `firestore.rules` deployed (covering `users`, `patients`, `guardian_relationships`, `patient_link_codes`, `prescriptions`, `prescriptions/{id}/extractions` and `medications`). **The project stays on the Spark (free) plan by the user's explicit, permanent choice — no Blaze, ever.** Firebase Storage is consequently unused: Module 04 saves prescription images to the device's local filesystem instead (see Module 04 below and ARCHITECTURE.md §18).
 
 ---
 
@@ -724,17 +748,159 @@ record written to Firestore with no permission errors.
 
 ---
 
+## Module 06 — Prescription Verification (v0.6.0) ✅
+
+Phase 6's exit criteria (ARCHITECTURE §12): *side-by-side review UI,
+confidence flags, field editing*. §7 step 10.
+
+### Completed features
+
+- **The `medications` collection arrives** (§4's shape), and arrives
+  locked down: a client may create **only** `PENDING_APPROVAL`, and may not
+  update a medication at all. Nothing in this module can produce an `ACTIVE`
+  medication, in the app or through the rules
+- **Verification screen** — the photo, the verbatim OCR text (expanded by
+  default), the drafts captured so far, and a form. OCR candidates appear
+  below as *shortcuts* that pre-fill the form, not as the subject
+- **Gated on `MANAGE_MEDICATIONS`** — the permission Module 03 deliberately
+  never grants by default, because it is the one that can end in a live dose
+- **`payloadHash`** (sha256) over the clinically significant fields, stored
+  at capture so Module 07 can assert a guardian approved what they saw
+- **Business-rule validation** on human input, using the same bounds the
+  extraction validator uses: 1-12 doses a day, courses up to 365 days,
+  name required, times sorted and de-duplicated
+- Prescription status moves `EXTRACTED -> UNDER_REVIEW` once something has
+  been captured from it
+
+### Screens
+
+| Screen | Route | Notes |
+|---|---|---|
+| Check the prescription | `/prescriptions/:patientId/:prescriptionId/verify` | Photo, raw text, captured medicines, "Add a medicine", OCR shortcuts |
+| Add a medicine | (modal sheet) | Name, strength, form, dose amount, dose times, food, dates, notes |
+
+### Files created
+
+```
+lib/features/medications/domain/  medication_models · medication_draft
+                                   medication_payload_hash
+                                   medication_repositories
+lib/features/medications/data/     firestore_medication_repository
+lib/features/verification/application/  verification_service
+                                        verification_providers
+lib/features/verification/presentation/ verify_prescription_screen
+                                        widgets/medication_draft_form
+test/features/medications/domain/  medication_payload_hash_test
+                                   medication_draft_test
+test/features/verification/application/ verification_service_test
+test/support/fake_medications.dart
+```
+
+### Files modified
+
+- `pubspec.yaml`, `app_version.dart` — `0.5.0+5` → `0.6.0+6`; `crypto`
+  promoted from a transitive dependency to a direct one
+- `firestore.rules` — `medications` added; `prescriptions` gains the
+  `EXTRACTED -> UNDER_REVIEW` edge
+- `app_routes.dart`, `app_router.dart` — the verify route
+- `extraction_panel.dart` — "Check it and add the medicines" entry point
+- `prescription_text_parser.dart` — empty-bracket cleanup (see defects)
+- `home_screen.dart` — Module 06 in "what is built", 07 as next
+
+### Dependencies
+
+**Added:** `crypto` (sha256 for `payloadHash`). It was already present
+transitively via Firebase, so this is a promotion, not new weight.
+
+### Database changes
+
+```
+medications/{medicationId}
+  patientId, prescriptionId, extractionId
+  medicineName, strength, form, dosage
+  timesLocal[] ("HH:mm", patient-local), foodInstruction
+  startDate, endDate | null, notes
+  status: 'PENDING_APPROVAL'   <- the only value a client may write
+  payloadHash (sha256, 64 chars)
+  createdByUid, createdAt, updatedAt
+```
+
+### Testing completed
+
+**306 tests passing** (up from 263), `flutter analyze` clean. The payload
+hash and the draft validator carry most of the new coverage — including a
+test that content cannot be shifted between fields without changing the
+hash, which a naive separator-joined encoding would allow.
+
+#### Live-device verification (2026-09-23, physical phone, real backend)
+
+Confirmed end to end against the real prescription: verification screen
+renders photo, raw text and shortcuts; the `ENZOX PLUS TAB` shortcut
+pre-filled name and form while correctly leaving strength, dose amount and
+times blank; a draft saved and appeared live as "Awaiting approval"; the
+prescription moved to `Needs review`.
+
+**No functional defect was found on device this time** — the first module
+where that is true. Two things are worth crediting rather than luck: the
+rules-query mismatch was caught at design time (below), and the strict
+`create` rule effectively verified itself, since the write could only
+succeed if `status`, the 64-character `payloadHash` and the exact field
+whitelist all matched what the repository sends.
+
+#### One defect caught at design time, not on device
+
+**`watchMedicationsForPrescription` would have been denied for any data.**
+It queried `where('prescriptionId', ...)` while the security rule authorizes
+on `patientId` — and Firestore only permits a query it can prove safe from
+that query's own filters. This is exactly the defect Module 03 shipped and
+found the hard way. Fixed before building by querying on `patientId` and
+narrowing client-side, with the reasoning recorded in the repository
+interface so it is not "optimized" back later.
+
+#### Two cosmetic defects found on device
+
+1. The home screen still read "Modules 01–05" while running 0.6.0.
+2. The Module 05 parser left empty brackets in names — `Tablet Atarax
+   (10 mg)` produced `Atarax ( )` — because the strength was removed from
+   inside the brackets that held it. Fixed with a regression test using the
+   verbatim string from the device.
+
+### Known issues / limitations
+
+1. **Nothing consumes a draft yet.** Module 07 owns approval, and until it
+   exists a `PENDING_APPROVAL` medication simply sits there. It schedules
+   nothing, which is the intended inert state.
+2. **A draft cannot be edited, only removed and re-added.** `update` is
+   closed on `medications` until Module 07 defines the transitions, and
+   partially opening it now would pre-empt that design.
+3. **Both remaining OCR shortcut names are still rough** — `Sompraz D (40 &`
+   keeps a trailing fragment, because the line itself was truncated by the
+   table cell. The verifier edits the field, so this is untidy rather than
+   unsafe.
+4. **The medication screens have no widget tests** — same trade as Modules
+   02-05, covered by the live-device run.
+
+### Deferred features
+
+- Editing a draft before approval → Module 07 or 08, with the rule change
+  that implies
+- Medication CRUD, pause/resume/cancel → Module 08
+- `prescriptions.activeExtractionId` (§4) → still unused; add it when a
+  module first needs to pin one extraction as canonical
+
+---
+
 ## Build information
 
 | | |
 |---|---|
 | Command | `flutter build apk --debug` |
-| Artifact | `NURIVA_Module_05_v0.5.0_debug.apk` (Modules 01-04's APKs still present alongside it) |
+| Artifact | `NURIVA_Module_06_v0.6.0_debug.apk` (Modules 01-05's APKs still present alongside it) |
 | Location | `NURIVA/builds/` (gitignored — binaries are never committed) |
-| Size | ~235 MB — debug builds bundle every ABI plus debug symbols, and Module 05 adds ML Kit's bundled OCR model (Module 04's was ~172.6 MB) |
-| Verified identity | `package: com.nuriva.app`, `versionName 0.5.0`, `versionCode 5`, `application-label: NURIVA`, `minSdk 24`, `targetSdk 36` |
+| Size | ~235 MB — debug builds bundle every ABI plus debug symbols; ML Kit's bundled OCR model is the bulk of it (Module 04's was ~172.6 MB) |
+| Verified identity | `package: com.nuriva.app`, `versionName 0.6.0`, `versionCode 6`, `application-label: NURIVA`, `minSdk 24`, `targetSdk 36` |
 | Signing | Debug keystore — sideload only, **not** Play-ready |
-| Build time | 384s cold with ~0.8 GB free RAM; ~70s incremental. ML Kit roughly tripled the cold build over Module 04's 142.7s |
+| Build time | ~108s incremental at ~0.66 GB free RAM. Module 05's ML Kit cold build was 384s; no native dependency was added in Module 06 (`crypto` is pure Dart) |
 
 For sideloading, `flutter build apk --release` produces a much smaller artifact (still debug-signed), and `--split-per-abi` cuts it further.
 
@@ -771,8 +937,8 @@ For sideloading, `flutter build apk --release` produces a much smaller artifact 
 | 03 | Patient & Guardian | v0.3.0 | ✅ Complete |
 | 04 | Prescription Upload | v0.4.0 | ✅ Complete |
 | 05 | Prescription Reading (on-device OCR) | v0.5.0 | ✅ Complete |
-| 06 | Prescription Verification | v0.6.0 | ⬜ |
-| 07 | Guardian Approval | v0.7.0 | ⬜ Safety-critical |
+| 06 | Prescription Verification | v0.6.0 | ✅ Complete |
+| 07 | Guardian Approval | v0.7.0 | ⬜ Safety-critical — **opens with an architectural decision**, see CURRENT STATE |
 | 08 | Medication Management | v0.8.0 | ⬜ |
 | 09 | Medication Schedule | v0.9.0 | ⬜ |
 | 10 | Medication Reminders | v0.10.0 | ⬜ |

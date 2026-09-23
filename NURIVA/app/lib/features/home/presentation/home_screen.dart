@@ -139,7 +139,7 @@ final class HomeScreen extends ConsumerWidget {
             ),
             const NurivaSectionHeader(
               title: 'What is built',
-              subtitle: 'Modules 01–05',
+              subtitle: 'Modules 01–06',
             ),
             const _BuiltItem(
               icon: Icons.lock_person_outlined,
@@ -165,6 +165,12 @@ final class HomeScreen extends ConsumerWidget {
                   'sent anywhere, and nothing is scheduled from it',
             ),
             const _BuiltItem(
+              icon: Icons.fact_check_outlined,
+              title: 'Checking a prescription',
+              subtitle: 'Read it against the photo and record each medicine — '
+                  'nothing is scheduled until a guardian approves it',
+            ),
+            const _BuiltItem(
               icon: Icons.palette_outlined,
               title: 'Design system',
               subtitle: 'Tokens, buttons, cards, inputs, dialogs, states',
@@ -183,7 +189,7 @@ final class HomeScreen extends ConsumerWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          'Module 06 — Prescription Verification',
+                          'Module 07 — Guardian Approval',
                           style: context.text.titleMedium,
                         ),
                       ),
@@ -195,8 +201,8 @@ final class HomeScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: NurivaTokens.space2),
                   Text(
-                    'Check the read-back against the photo and correct it, '
-                    'before any medicine is set up.',
+                    'A guardian approves a medicine before any reminder is '
+                    'ever scheduled.',
                     style: context.text.bodyMedium?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),

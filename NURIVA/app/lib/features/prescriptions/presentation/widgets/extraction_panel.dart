@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:nuriva/core/design/design.dart';
+import 'package:nuriva/core/routing/app_routes.dart';
 import 'package:nuriva/features/auth/application/auth_providers.dart';
 import 'package:nuriva/features/prescriptions/application/extraction_service.dart';
 import 'package:nuriva/features/prescriptions/application/prescription_providers.dart';
@@ -128,13 +130,27 @@ class _ExtractionPanelState extends ConsumerState<ExtractionPanel> {
               style: context.text.bodyMedium,
             ),
           )
-        else
+        else ...[
           _ExtractionResult(
             extraction: latest,
             showRawText: _showRawText,
             onToggleRawText: () =>
                 setState(() => _showRawText = !_showRawText),
           ),
+          const SizedBox(height: NurivaTokens.space5),
+          // The only way out of reading and into recording. Module 06 owns
+          // everything past this button.
+          NurivaButton(
+            label: 'Check it and add the medicines',
+            icon: Icons.fact_check_outlined,
+            onPressed: () => context.push(
+              AppRoutes.prescriptionVerifyFor(
+                widget.prescription.patientId,
+                widget.prescription.id,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

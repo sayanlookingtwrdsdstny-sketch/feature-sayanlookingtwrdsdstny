@@ -71,6 +71,18 @@ abstract final class AppRoutes {
     return '/prescriptions/$patientId/$prescriptionId';
   }
 
+  /// Checking a prescription's read-back and capturing medicines from it
+  /// (Module 06). A child of the detail route, because verification only
+  /// ever happens against one prescription.
+  static const String prescriptionVerify =
+      '/prescriptions/:patientId/:prescriptionId/verify';
+
+  static String prescriptionVerifyFor(
+    String patientId,
+    String prescriptionId,
+  ) =>
+      '${prescriptionDetailFor(patientId, prescriptionId)}/verify';
+
   /// Developer-only design system catalogue. Registered by the router only
   /// when `AppConfig.allowDeveloperTools` is true.
   static const String gallery = '/design-system';

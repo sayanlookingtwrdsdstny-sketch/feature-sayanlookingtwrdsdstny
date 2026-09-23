@@ -283,6 +283,11 @@ service cloud.firestore {
                          (resource.data.status == 'PROCESSING'
                            && (request.resource.data.status == 'EXTRACTED'
                                || request.resource.data.status == 'FAILED'))
+                         ||
+                         // Module 06: a person has started capturing
+                         // medicines off this prescription.
+                         (resource.data.status == 'EXTRACTED'
+                           && request.resource.data.status == 'UNDER_REVIEW')
                        );
 
       // Only while UPLOADED — nothing to undo once extraction has looked at
@@ -341,7 +346,76 @@ service cloud.firestore {
       }
     }
 
-    // Everything else (medications, dose_logs, ...) belongs to later
+    // Module 06 adds medications (ARCHITECTURE §4, §7 steps 10-11).
+    //
+    // This is the collection the product's safety rests on: a medication
+    // that reaches ACTIVE becomes a dosing schedule and then alarms on a
+    // patient's phone. So the rules here are written to make the dangerous
+    // thing structurally impossible rather than merely unlikely.
+    function canManageMedicationsFor(patientId) {
+      return isPatientSelf(patientId)
+             || hasPermission(patientId, 'MANAGE_MEDICATIONS');
+    }
+    function canViewMedicationsFor(patientId) {
+      return isPatientSelf(patientId)
+             || hasPermission(patientId, 'VIEW_MEDICATIONS')
+             || hasPermission(patientId, 'MANAGE_MEDICATIONS');
+    }
+
+    match /medications/{medicationId} {
+      // Authorized on `patientId`, which is also the field every query
+      // filters by. Module 03's defect was a rule that could not be proven
+      // from a query's own filters; a `where('prescriptionId', ...)` query
+      // against this rule would be denied for any data, so the repository
+      // queries by patient and narrows client-side.
+      allow read: if request.auth != null
+                  && canViewMedicationsFor(resource.data.patientId);
+
+      // **No client may ever create an ACTIVE medication.** Module 06
+      // captures drafts a person typed while reading the prescription, and
+      // a draft is inert: it schedules nothing until Module 07's approval
+      // moves it on. MANAGE_MEDICATIONS is required — the one permission
+      // Module 03 never grants by default, precisely because it is the one
+      // that can end in a live dose.
+      allow create: if request.auth != null
+                    && canManageMedicationsFor(request.resource.data.patientId)
+                    && request.resource.data.createdByUid == request.auth.uid
+                    && request.resource.data.status == 'PENDING_APPROVAL'
+                    && request.resource.data.medicineName is string
+                    && request.resource.data.medicineName.size() > 0
+                    && request.resource.data.medicineName.size() <= 120
+                    && request.resource.data.timesLocal is list
+                    && request.resource.data.timesLocal.size() > 0
+                    && request.resource.data.timesLocal.size() <= 12
+                    && request.resource.data.startDate is timestamp
+                    && request.resource.data.payloadHash is string
+                    && request.resource.data.payloadHash.size() == 64
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.updatedAt == request.time
+                    && request.resource.data.keys().hasOnly([
+                         'patientId', 'prescriptionId', 'extractionId',
+                         'medicineName', 'strength', 'form', 'dosage',
+                         'timesLocal', 'foodInstruction', 'startDate',
+                         'endDate', 'notes', 'status', 'payloadHash',
+                         'createdByUid', 'createdAt', 'updatedAt'
+                       ]);
+
+      // Module 07 owns every transition out of PENDING_APPROVAL, and it has
+      // a real design question to answer first: §10 assumed a Cloud
+      // Function would be the only thing able to activate a schedule, and
+      // there is no Function. Opening this rule is a deliberate decision,
+      // not a detail — so it stays closed until that decision is made.
+      allow update: if false;
+
+      // A draft captured by mistake can be removed. Once approved, a
+      // medication is part of the patient's record and Module 08 owns
+      // cancelling it properly.
+      allow delete: if request.auth != null
+                    && resource.data.status == 'PENDING_APPROVAL'
+                    && canManageMedicationsFor(resource.data.patientId);
+    }
+
+    // Everything else (dose_logs, appointments, ...) belongs to later
     // modules. Explicitly closed rather than left to the project default, so
     // this file is the single source of truth.
     match /{document=**} {

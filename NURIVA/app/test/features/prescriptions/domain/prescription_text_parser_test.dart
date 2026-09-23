@@ -43,6 +43,16 @@ void main() {
       expect(candidate.dosesPerDay, 1);
     });
 
+    test('does not leave empty brackets where a strength was removed', () {
+      // Seen on device: "Tablet Atarax (10 mg)" produced the name
+      // "Atarax ( )".
+      final result = PrescriptionTextParser.parse(['Tablet Atarax (10 mg)']);
+
+      final candidate = result.candidates.single;
+      expect(candidate.name, 'Atarax');
+      expect(candidate.strength, '10 mg');
+    });
+
     test('captures meal-timing instructions separately from the name', () {
       final result = PrescriptionTextParser.parse(
         ['TAB Enzox 1-0-1 10 days after dinner'],
